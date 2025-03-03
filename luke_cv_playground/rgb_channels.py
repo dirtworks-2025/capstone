@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 # Load the image
-image = cv2.imread("images/younger_crops.jpg")  # Replace with your image file
+image = cv2.imread("inputs/synthetic.png")  # Replace with your image file
 
 # Split channels
 blue, green, red = cv2.split(image)
