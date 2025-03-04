@@ -15,41 +15,48 @@ def get_pixel_archipelagos(mask):
     
     for y in range(h):
         for x in range(w):
-            if mask[y, x] == 255:
-                if is_already_member_of_an_archipelago(pixel_archipelagos, y, x):
-                    continue
-                pixels = [(y, x)]
-                get_pixels_in_same_archipelago(mask, y, x, pixels)
-                pixel_archipelagos.append(pixels)
+            if mask[y, x] == 0:
+                continue
+            pixels = build_pixel_archipelago(mask, y, x)
+            if not pixels or len(pixels) < 10:
+                # Ignore small or null archipelagos
+                continue
+            pixel_archipelagos.append(pixels)
 
     return pixel_archipelagos
+        
+def build_pixel_archipelago(mask, y, x):
+    pixels_to_visit = [(y, x)]
+    pixels_in_archipelago = []
+    while len(pixels_to_visit) > 0:
+        y, x = pixels_to_visit.pop()
+        if mask[y, x] == 0:
+            continue
+        mask[y, x] = 0 # Mark as visited by changing the pixel value to 0
+        pixels_in_archipelago.append((y, x))
+        maybe_nearby_pixels = get_nearby_white_pixels(mask, y, x, pixels_in_archipelago)
+        if not maybe_nearby_pixels:
+            continue
+        pixels_to_visit.extend(maybe_nearby_pixels)
+    return pixels_in_archipelago
 
-def is_already_member_of_an_archipelago(pixel_archipelagos, y, x):
-    for pixels in pixel_archipelagos:
-        if (y, x) in pixels:
-            return True
 
-def get_pixels_in_same_archipelago(mask, y, x, pixels):
-    # Recursively find all the pixels connected to the pixel at (y, x) within some tolerance
-
+def get_nearby_white_pixels(mask, y, x, pixels_to_exclude):
     tol = 2 # Tolerance for gaps between islands
-    h, w = image.shape[:2]
+    h, w = mask.shape[:2]
 
     x_min = max(x - tol, 0)
     x_max = min(x + tol + 1, w)
     y_min = max(y - tol, 0)
     y_max = min(y + tol + 1, h)
 
-    pixels_to_visit = []
+    nearby_pixels = []
+    for y in range(y_min, y_max):
+        for x in range(x_min, x_max):
+            if mask[y, x] != 0 and (y, x) not in pixels_to_exclude:
+                nearby_pixels.append((y, x))
 
-    for i in range(y_min, y_max):
-        for j in range(x_min, x_max):
-            if mask[i, j] == 255 and (i, j) not in pixels:
-                pixels.append((i, j))
-                pixels_to_visit.append((i, j))
-
-    for i, j in pixels_to_visit:
-        get_pixels_in_same_archipelago(mask, i, j, pixels)
+    return nearby_pixels
 
 def get_best_fit_line_segment(pixels):
     if len(pixels) < 2:
@@ -95,6 +102,8 @@ def get_best_fit_line_segment(pixels):
 
 
 image = cv2.imread("inputs/older_with_drip_tape.jpg") 
+reduction_factor = 0.25
+image = cv2.resize(image, (0, 0), fx=reduction_factor, fy=reduction_factor)
 cv2.namedWindow("HSV Filter")
 
 hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -104,15 +113,19 @@ print("Mean Saturation:", s_mean)
 cv2.createTrackbar("Sat Max", "HSV Filter", int(s_mean*0.8), 255, nothing)
 cv2.createTrackbar("Open Kernel", "HSV Filter", 0, 20, nothing)
 cv2.createTrackbar("Close Kernel", "HSV Filter", 0, 20, nothing)
-cv2.createTrackbar("Dilate Iterations", "HSV Filter", 0, 20, nothing)
-cv2.createTrackbar("Erode Iterations", "HSV Filter", 0, 20, nothing)
+
+prev_s_max = -1
+prev_open_kernel_size = -1
+prev_close_kernel_size = -1
 
 while True:
     s_max = cv2.getTrackbarPos("Sat Max", "HSV Filter")
     open_kernel_size = cv2.getTrackbarPos("Open Kernel", "HSV Filter")
     close_kernel_size = cv2.getTrackbarPos("Close Kernel", "HSV Filter")
-    dilate_iterations = cv2.getTrackbarPos("Dilate Iterations", "HSV Filter")
-    erode_iterations = cv2.getTrackbarPos("Erode Iterations", "HSV Filter")
+
+    if (prev_s_max == s_max) and (prev_open_kernel_size == open_kernel_size) and (prev_close_kernel_size == close_kernel_size):
+        cv2.waitKey(1)
+        continue
 
     # Create a mask
     lower = np.array([0, 0, 0])
@@ -126,8 +139,6 @@ while True:
     erode_kernel = np.ones((2, 2), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, open_kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
-    mask = cv2.dilate(mask, dilate_kernel, iterations = dilate_iterations)
-    mask = cv2.erode(mask, erode_kernel, iterations = erode_iterations)
 
     # Crop the mask
     height, width = mask.shape
@@ -138,16 +149,32 @@ while True:
     # Get the pixel archipelagos
     pixel_archipelagos = get_pixel_archipelagos(mask)
 
-    # Get the best fit line segments
+    mask_colored = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    # Draw the pixel archipelagos in random colors
     for pixels in pixel_archipelagos:
-        try:
-            p1, p2 = get_best_fit_line_segment(pixels)
-            cv2.line(mask, p1, p2, (0, 255, 0), 2)
-        except Exception as e:
-            print(e)
+        color = np.random.randint(0, 255, 3)
+        for y, x in pixels:
+            mask_colored[y, x] = color
+    mask = mask_colored
+
+    print("Number of archipelagos:", len(pixel_archipelagos))
+    print("Image shape:", mask.shape)
+
+    # # Get the best fit line segments
+    # for pixels in pixel_archipelagos:
+    #     try:
+    #         p1, p2 = get_best_fit_line_segment(pixels)
+    #         cv2.line(mask, p1, p2, (0, 255, 0), 2)
+    #     except Exception as e:
+    #         print(e)
 
     # Show the result
     cv2.imshow("HSV Filter", mask)
+
+    # Update the previous values
+    prev_s_max = s_max
+    prev_open_kernel_size = open_kernel_size
+    prev_close_kernel_size = close_kernel_size
 
     # Break the loop
     if cv2.waitKey(1) & 0xFF == ord("q"):
