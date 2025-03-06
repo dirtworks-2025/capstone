@@ -92,52 +92,40 @@ def merge_nearby_islands(islands, mask, distance_threshold):
 
 def get_best_fit_line(pixels):
     """
-    Computes the best fit line for a given set of pixels
+    Computes the best fit line for a given set of pixels.
+    Crops the line to fit within the image dimensions.
     """
-    if len(pixels) < 2:
-        raise ValueError("At least two points are required to fit a line.")
 
-    x, y = zip(*pixels)
-    A = np.vstack([x, np.ones(len(x))]).T
-    m, c = np.linalg.lstsq(A, y, rcond=None)[0]
-    x1 = 0
-    y1 = int(m * x1 + c)
-    x2 = 1000
-    y2 = int(m * x2 + c)
-    return (x1, y1), (x2, y2)
+    # Fit a line to the pixels (y = mx + b)
+    y, x = zip(*pixels)
+    m, b = np.polyfit(x, y, 1)
+
+    # Calculate the start and end points of the line
+    start = (int(min(x)), int(m * min(x) + b))
+    end = (int(max(x)), int(m * max(x) + b))
+
+    return start, end
 
 # Load and resize image
-image = cv2.imread("inputs/younger_with_drip_tape.jpg") 
+image = cv2.imread("inputs/older_with_drip_tape.jpg")
 image = cv2.resize(image, (0, 0), fx=0.25, fy=0.25)
 height, width = image.shape[:2]
-image = image[int(height * 0.5):] # Crop to bottom half
+amount_of_top_to_crop = 0.5
+image = image[int(height * amount_of_top_to_crop):]
 
 cv2.namedWindow("HSV Filter")
+
 hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 s_mean = cv2.mean(hsv)[1]
 print("Mean Saturation:", s_mean)
 
-cv2.createTrackbar("Sat Max", "HSV Filter", int(s_mean * 0.8), 255, nothing)
-cv2.createTrackbar("Open Kernel", "HSV Filter", 4, 20, nothing)
-cv2.createTrackbar("Close Kernel", "HSV Filter", 3, 20, nothing)
-cv2.createTrackbar("Distance Threshold", "HSV Filter", 10, 50, nothing)
-
-prev_s_max, prev_open_kernel_size, prev_close_kernel_size, prev_distance_threshold = -1, -1, -1, -1
-
-while True:
+# Trackbar change callback
+def update_mask(_=None):
+    """Callback function to update the mask visualization."""
     s_max = cv2.getTrackbarPos("Sat Max", "HSV Filter")
     open_kernel_size = cv2.getTrackbarPos("Open Kernel", "HSV Filter")
     close_kernel_size = cv2.getTrackbarPos("Close Kernel", "HSV Filter")
     distance_threshold = cv2.getTrackbarPos("Distance Threshold", "HSV Filter")
-
-    if (
-        (prev_s_max == s_max) and 
-        (prev_open_kernel_size == open_kernel_size) and 
-        (prev_close_kernel_size == close_kernel_size) and 
-        (prev_distance_threshold == distance_threshold)
-    ):
-        cv2.waitKey(1)
-        continue
 
     # Saturation thresholding
     lower = np.array([0, 0, 0])
@@ -145,9 +133,11 @@ while True:
     sat_mask = cv2.inRange(hsv, lower, upper)
 
     # Morphological transformations to reduce noise
+    denoised_mask = sat_mask.copy()
+    
     if open_kernel_size > 0:
         open_kernel = np.ones((open_kernel_size, open_kernel_size), np.uint8)
-        denoised_mask = cv2.morphologyEx(sat_mask, cv2.MORPH_OPEN, open_kernel)
+        denoised_mask = cv2.morphologyEx(denoised_mask, cv2.MORPH_OPEN, open_kernel)
 
     if close_kernel_size > 0:
         close_kernel = np.ones((close_kernel_size, close_kernel_size), np.uint8)
@@ -177,15 +167,17 @@ while True:
         for y, x in pixels:
             archipelago_mask[y, x] = color
 
-    # # Draw best fit lines (optional)
-    # for pixels in pixel_archipelagos:
-    #     try:
-    #         p1, p2 = get_best_fit_line(pixels)
-    #         cv2.line(mask_colored, p1, p2, (0, 255, 0), 2)
-    #     except Exception as e:
-    #         print(e)
+    # Get the best fit line for each archipelago
+    mask_with_lines = cv2.cvtColor(mask_copy, cv2.COLOR_GRAY2BGR)
+    image_with_lines = image.copy()
+    for pixels in archipelagos:
+        if len(pixels) < 100: # Skip small archipelagos
+            continue
+        start, end = get_best_fit_line(pixels)
+        cv2.line(image_with_lines, start, end, (0, 0, 255), 2)
+        cv2.line(mask_with_lines, start, end, (0, 0, 255), 2)
 
-    # Make a 4x2 grid of images
+    # Create a 4x2 grid of images
     first_row = np.hstack([
         image,
         cv2.cvtColor(sat_mask, cv2.COLOR_GRAY2BGR),
@@ -195,28 +187,25 @@ while True:
     second_row = np.hstack([
         coastline_mask,
         archipelago_mask,
-        np.zeros_like(image),
-        np.zeros_like(image),
+        mask_with_lines,
+        image_with_lines,
     ])
     combined = np.vstack([first_row, second_row])
 
     cv2.imshow("HSV Filter", combined)
 
-    # Update previous values
-    (
-        prev_s_max, 
-        prev_open_kernel_size, 
-        prev_close_kernel_size,
-        prev_distance_threshold,
-    ) = (
-        s_max, 
-        open_kernel_size, 
-        close_kernel_size,
-        distance_threshold,
-    )
+# Create trackbars with callback
+cv2.createTrackbar("Sat Max", "HSV Filter", int(s_mean * 0.8), 255, update_mask)
+cv2.createTrackbar("Open Kernel", "HSV Filter", 4, 20, update_mask)
+cv2.createTrackbar("Close Kernel", "HSV Filter", 3, 20, update_mask)
+cv2.createTrackbar("Distance Threshold", "HSV Filter", 10, 50, update_mask)
 
+# Initialize the display once
+update_mask()
+
+# Main loop to wait for user to press 'q'
+while True:
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
 cv2.destroyAllWindows()
-cv2.imwrite("outputs/mask.jpg", island_mask)
