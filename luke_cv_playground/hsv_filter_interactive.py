@@ -90,10 +90,19 @@ def merge_nearby_islands(islands, mask, distance_threshold):
 
     return list(merged_archipelagos.values())
 
+class Line:
+    start = None
+    end = None
+    midpoint = None
+
+    def __init__(self, start, end):
+        self.start = start
+        self.end = end
+        self.midpoint = (int((start[0] + end[0]) / 2), int((start[1] + end[1]) / 2))
+
 def get_best_fit_line(pixels):
     """
     Computes the best fit line for a given set of pixels.
-    Crops the line to fit within the image dimensions.
     """
 
     # Fit a line to the pixels (y = mx + b)
@@ -104,14 +113,15 @@ def get_best_fit_line(pixels):
     start = (int(min(x)), int(m * min(x) + b))
     end = (int(max(x)), int(m * max(x) + b))
 
-    return start, end
+    return Line(start, end)
 
 # Load and resize image
-image = cv2.imread("inputs/older_with_drip_tape.jpg")
+image = cv2.imread("inputs/younger_with_drip_tape.jpg")
 image = cv2.resize(image, (0, 0), fx=0.25, fy=0.25)
 height, width = image.shape[:2]
 amount_of_top_to_crop = 0.5
 image = image[int(height * amount_of_top_to_crop):]
+height, width = image.shape[:2]
 
 cv2.namedWindow("HSV Filter")
 
@@ -170,13 +180,44 @@ def update_mask(_=None):
     # Get the best fit line for each archipelago
     mask_with_lines = cv2.cvtColor(mask_copy, cv2.COLOR_GRAY2BGR)
     image_with_lines = image.copy()
+    lines = []
     for pixels in archipelagos:
         if len(pixels) < 100: # Skip small archipelagos
             continue
-        start, end = get_best_fit_line(pixels)
-        cv2.line(image_with_lines, start, end, (0, 0, 255), 2)
-        cv2.line(mask_with_lines, start, end, (0, 0, 255), 2)
+        line = get_best_fit_line(pixels)
+        lines.append(line)
 
+    # Sort lines by x-coordinate of midpoint
+    lines.sort(key=lambda line: line.midpoint[0])
+
+    # Determines the indices of the two lines closest to the image centerline on each side
+    right_line_index = 0
+    left_line_index = 0
+
+    for idx, line in enumerate(lines):
+        if line.midpoint[0] > width / 2:
+            right_line_index = idx
+            left_line_index = idx - 1
+            break
+
+    # Draw lines on the mask and original image
+    # Two lines closest to image centerline are colored green
+    for idx, line in enumerate(lines):
+        color = (0, 255, 0) if idx == right_line_index or idx == left_line_index else (0, 0, 255)
+        cv2.line(mask_with_lines, line.start, line.end, color, 2)
+        cv2.line(image_with_lines, line.start, line.end, color, 2)
+
+    # Add a grey/white line at the image vertical centerline
+    cv2.line(mask_with_lines, (width // 2, 0), (width // 2, height), (128, 128, 128), 2)
+    cv2.line(image_with_lines, (width // 2, 0), (width // 2, height), (255, 255, 255), 2)
+
+# TODO::
+    # # Add a blue line starting from the bottom of the image centerline, pointing toward the average vertor of the two green lines
+    # if right_line_index > 0 and left_line_index > 0:
+    #     average_midpoint = ((lines[right_line_index].midpoint[0] + lines[left_line_index].midpoint[0]) // 2, (lines[right_line_index].midpoint[1] + lines[left_line_index].midpoint[1]) // 2)
+    #     cv2.line(mask_with_lines, (width // 2, height), average_midpoint, (255, 0, 0), 2)
+    #     cv2.line(image_with_lines, (width // 2, height), average_midpoint, (255, 0, 0), 2)
+        
     # Create a 4x2 grid of images
     first_row = np.hstack([
         image,
