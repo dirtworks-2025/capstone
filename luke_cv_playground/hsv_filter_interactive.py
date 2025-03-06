@@ -1,61 +1,110 @@
 import cv2
 import numpy as np
-from collections import deque
+from scipy.spatial.distance import cdist
 
 def nothing(x):
     pass
 
 def get_pixel_islands(mask):
     """
-    Uses OpenCV's connected components to extract pixel archipelagos efficiently.
+    Uses OpenCV's connected components to extract pixel islands efficiently.
     """
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
 
-    pixel_archipelagos = []
+    pixel_islands = []
     for i in range(1, num_labels):  # Ignore background (label 0)
         if stats[i, cv2.CC_STAT_AREA] >= 10:  # Filter out small components
             y, x = np.where(labels == i)
             pixels = list(zip(y, x))
-            pixel_archipelagos.append(pixels)
+            pixel_islands.append(pixels)
     
-    return pixel_archipelagos
+    return pixel_islands
 
-def get_best_fit_line_segment(pixels):
+def get_coastline_mask(islands, mask):
     """
-    Computes the best fit line for a given set of pixels using cv2.fitLine.
+    Extracts the coastlines of each connected component. Returns a binary mask with coastlines colored randomly.
+    """
+    coastline_mask_grayscale = np.zeros_like(mask)
+    coastline_mask = cv2.cvtColor(coastline_mask_grayscale, cv2.COLOR_GRAY2BGR)
+    for pixels in islands:
+        temp_mask = np.zeros_like(mask)
+        for y, x in pixels:
+            temp_mask[y, x] = 255  # Fill pixels for current component
+
+        contours, _ = cv2.findContours(temp_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        random_color = np.random.randint(0, 255, 3).tolist()
+        if contours:
+            cv2.drawContours(coastline_mask, contours, -1, random_color, 1)
+
+    return coastline_mask
+
+def merge_nearby_islands(islands, mask, distance_threshold):
+    """
+    Merges connected components whose closest border points are within a given distance threshold.
+    """
+    num_islands = len(islands)
+    parent = list(range(num_islands))  # Union-Find parent array
+
+    def find(i):
+        """Find root of component i"""
+        if parent[i] != i:
+            parent[i] = find(parent[i])
+        return parent[i]
+
+    def union(i, j):
+        """Union two components"""
+        root_i = find(i)
+        root_j = find(j)
+        if root_i != root_j:
+            parent[root_j] = root_i  # Merge into one set
+
+    # Extract borders of each component
+    borders = []
+    for pixels in islands:
+        temp_mask = np.zeros_like(mask)
+        for y, x in pixels:
+            temp_mask[y, x] = 255  # Fill pixels for current component
+
+        contours, _ = cv2.findContours(temp_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if contours:
+            borders.append(np.vstack(contours[0]))  # Store boundary pixels
+
+    # Compute pairwise distances between component borders
+    for i in range(num_islands):
+        for j in range(i + 1, num_islands):
+            if len(borders[i]) == 0 or len(borders[j]) == 0:
+                continue  # Skip if no border detected
+            dist_matrix = cdist(borders[i], borders[j])  # Compute all pairwise distances
+            min_dist = np.min(dist_matrix)
+
+            if min_dist < distance_threshold:
+                union(i, j)
+
+    # Group components based on final merged sets
+    merged_archipelagos = {}
+    for i in range(num_islands):
+        root = find(i)
+        if root not in merged_archipelagos:
+            merged_archipelagos[root] = []
+        merged_archipelagos[root].extend(islands[i])
+
+    return list(merged_archipelagos.values())
+
+def get_best_fit_line(pixels):
+    """
+    Computes the best fit line for a given set of pixels
     """
     if len(pixels) < 2:
         raise ValueError("At least two points are required to fit a line.")
 
-    points = np.array(pixels).reshape(-1, 1, 2).astype(np.float32)
-    [vx, vy, x, y] = cv2.fitLine(points, cv2.DIST_L2, 0, 0.01, 0.01)
-
-    min_x, min_y = np.min(points[:, 0, :], axis=0)
-    max_x, max_y = np.max(points[:, 0, :], axis=0)
-
-    # Find intersection points
-    def line_intersection_with_box(x, y, vx, vy, min_x, min_y, max_x, max_y):
-        intersections = []
-        for x_bound in [min_x, max_x]:
-            t = (x_bound - x) / vx
-            y_intersect = y + t * vy
-            if min_y <= y_intersect <= max_y:
-                intersections.append((x_bound, int(y_intersect)))
-
-        for y_bound in [min_y, max_y]:
-            t = (y_bound - y) / vy
-            x_intersect = x + t * vx
-            if min_x <= x_intersect <= max_x:
-                intersections.append((int(x_intersect), y_bound))
-
-        return intersections
-
-    intersections = line_intersection_with_box(x, y, vx, vy, min_x, min_y, max_x, max_y)
-    
-    if len(intersections) != 2:
-        raise RuntimeError("Failed to find two intersection points with the bounding box.")
-
-    return intersections[0], intersections[1]
+    x, y = zip(*pixels)
+    A = np.vstack([x, np.ones(len(x))]).T
+    m, c = np.linalg.lstsq(A, y, rcond=None)[0]
+    x1 = 0
+    y1 = int(m * x1 + c)
+    x2 = 1000
+    y2 = int(m * x2 + c)
+    return (x1, y1), (x2, y2)
 
 # Load and resize image
 image = cv2.imread("inputs/younger_with_drip_tape.jpg") 
@@ -71,24 +120,31 @@ print("Mean Saturation:", s_mean)
 cv2.createTrackbar("Sat Max", "HSV Filter", int(s_mean * 0.8), 255, nothing)
 cv2.createTrackbar("Open Kernel", "HSV Filter", 4, 20, nothing)
 cv2.createTrackbar("Close Kernel", "HSV Filter", 3, 20, nothing)
+cv2.createTrackbar("Distance Threshold", "HSV Filter", 10, 50, nothing)
 
-prev_s_max, prev_open_kernel_size, prev_close_kernel_size = -1, -1, -1
+prev_s_max, prev_open_kernel_size, prev_close_kernel_size, prev_distance_threshold = -1, -1, -1, -1
 
 while True:
     s_max = cv2.getTrackbarPos("Sat Max", "HSV Filter")
     open_kernel_size = cv2.getTrackbarPos("Open Kernel", "HSV Filter")
     close_kernel_size = cv2.getTrackbarPos("Close Kernel", "HSV Filter")
+    distance_threshold = cv2.getTrackbarPos("Distance Threshold", "HSV Filter")
 
-    if (prev_s_max == s_max) and (prev_open_kernel_size == open_kernel_size) and (prev_close_kernel_size == close_kernel_size):
+    if (
+        (prev_s_max == s_max) and 
+        (prev_open_kernel_size == open_kernel_size) and 
+        (prev_close_kernel_size == close_kernel_size) and 
+        (prev_distance_threshold == distance_threshold)
+    ):
         cv2.waitKey(1)
         continue
 
-    # Create a mask
+    # Saturation thresholding
     lower = np.array([0, 0, 0])
     upper = np.array([179, s_max, 255])
     sat_mask = cv2.inRange(hsv, lower, upper)
 
-    # Morphological transformations
+    # Morphological transformations to reduce noise
     if open_kernel_size > 0:
         open_kernel = np.ones((open_kernel_size, open_kernel_size), np.uint8)
         denoised_mask = cv2.morphologyEx(sat_mask, cv2.MORPH_OPEN, open_kernel)
@@ -97,41 +153,70 @@ while True:
         close_kernel = np.ones((close_kernel_size, close_kernel_size), np.uint8)
         denoised_mask = cv2.morphologyEx(denoised_mask, cv2.MORPH_CLOSE, close_kernel)
 
-    # Get the pixel archipelagos using connected 
+    # Get the pixel islands
     mask_copy = denoised_mask.copy()
-    pixel_archipelagos = get_pixel_islands(mask_copy)
+    islands = get_pixel_islands(mask_copy)
 
-    # Convert to color image
-    mask_colored = cv2.cvtColor(mask_copy, cv2.COLOR_GRAY2BGR)
-
-    # Draw archipelagos in random colors
-    for pixels in pixel_archipelagos:
+    # Draw islands in random colors
+    island_mask = cv2.cvtColor(mask_copy, cv2.COLOR_GRAY2BGR)
+    for pixels in islands:
         color = np.random.randint(0, 255, 3).tolist()
         for y, x in pixels:
-            mask_colored[y, x] = color
+            island_mask[y, x] = color
+
+    # Get mask of each island's coastline
+    coastline_mask = get_coastline_mask(islands, mask_copy)
+
+    # Merge nearby islands into an archipelago
+    archipelagos = merge_nearby_islands(islands, mask_copy, distance_threshold)
+
+    # Draw archipelagos in random colors
+    archipelago_mask = cv2.cvtColor(mask_copy, cv2.COLOR_GRAY2BGR)
+    for pixels in archipelagos:
+        color = np.random.randint(0, 255, 3).tolist()
+        for y, x in pixels:
+            archipelago_mask[y, x] = color
 
     # # Draw best fit lines (optional)
     # for pixels in pixel_archipelagos:
     #     try:
-    #         p1, p2 = get_best_fit_line_segment(pixels)
+    #         p1, p2 = get_best_fit_line(pixels)
     #         cv2.line(mask_colored, p1, p2, (0, 255, 0), 2)
     #     except Exception as e:
     #         print(e)
 
-    combined = np.hstack((
-        image, 
-        cv2.cvtColor(sat_mask, cv2.COLOR_GRAY2BGR), 
-        cv2.cvtColor(denoised_mask, cv2.COLOR_GRAY2BGR), 
-        mask_colored
-    ))
+    # Make a 4x2 grid of images
+    first_row = np.hstack([
+        image,
+        cv2.cvtColor(sat_mask, cv2.COLOR_GRAY2BGR),
+        cv2.cvtColor(denoised_mask, cv2.COLOR_GRAY2BGR),
+        island_mask
+    ])
+    second_row = np.hstack([
+        coastline_mask,
+        archipelago_mask,
+        np.zeros_like(image),
+        np.zeros_like(image),
+    ])
+    combined = np.vstack([first_row, second_row])
 
     cv2.imshow("HSV Filter", combined)
 
     # Update previous values
-    prev_s_max, prev_open_kernel_size, prev_close_kernel_size = s_max, open_kernel_size, close_kernel_size
+    (
+        prev_s_max, 
+        prev_open_kernel_size, 
+        prev_close_kernel_size,
+        prev_distance_threshold,
+    ) = (
+        s_max, 
+        open_kernel_size, 
+        close_kernel_size,
+        distance_threshold,
+    )
 
     if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
 cv2.destroyAllWindows()
-cv2.imwrite("outputs/mask.jpg", mask_colored)
+cv2.imwrite("outputs/mask.jpg", island_mask)
