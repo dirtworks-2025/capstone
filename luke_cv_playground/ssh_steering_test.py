@@ -8,13 +8,13 @@ def main(stdscr):
 
     while True:
         key = stdscr.getch()
-        if key == ord('w'):
+        if key == curses.KEY_UP:
             print("Move forward")
-        elif key == ord('a'):
+        elif key == curses.KEY_LEFT:
             print("Turn left")
-        elif key == ord('s'):
+        elif key == curses.KEY_DOWN:
             print("Move backward")
-        elif key == ord('d'):
+        elif key == curses.KEY_RIGHT:
             print("Turn right")
         elif key == ord('q'):
             break  # Quit on 'q' press
