@@ -1,3 +1,5 @@
+#include <Arduino.h>
+
 const int RPWM=2;
 const int LPWM=3;
 
