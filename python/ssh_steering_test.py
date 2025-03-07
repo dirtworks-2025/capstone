@@ -8,8 +8,9 @@ rover = [
     "O|             |O",
 ]
 
-GRID_SPACING_HORI = 25
-GRID_SPACING_VERT = 10
+BASE_GRID_SPACING = 15
+DELTA_THETA_DEGREES = 5
+DELTA_THETA_RADIANS = math.radians(DELTA_THETA_DEGREES)
 
 def draw_rover(stdscr, x, y):
     for i, line in enumerate(rover):
@@ -44,22 +45,34 @@ def draw_line(stdscr, x1, y1, x2, y2, char="+"):
             err += dx
             y1 += sy
 
+def get_scaled_spacing(theta):
+    """ Adjusts grid spacing dynamically to maintain square proportions. """
+    scale_factor = 0.4*math.cos(theta * 2) + 1
+
+    scaled_hori = int(BASE_GRID_SPACING * scale_factor)
+    scaled_vert = int(BASE_GRID_SPACING / scale_factor)
+
+    return max(scaled_hori, 5), max(scaled_vert, 5)  # Prevent too-small grid gaps
+
 def draw_grid(stdscr, dx, dy, theta):
-    """ Draws a rotated and translated grid. """
+    """ Draws a rotated and translated grid with dynamic spacing correction. """
     max_y, max_x = stdscr.getmaxyx()
 
     # Increase grid size to avoid clipping
     max_x *= 10
     max_y *= 10
 
+    # Get dynamically adjusted spacing
+    grid_spacing_hori, grid_spacing_vert = get_scaled_spacing(theta)
+
     # Draw rotated vertical lines
-    for x in range(-max_x, max_x, GRID_SPACING_HORI):
+    for x in range(-max_x, max_x, grid_spacing_hori):
         x1, y1 = rotate_and_translate(x, -max_y, dx, dy, theta)
         x2, y2 = rotate_and_translate(x, max_y, dx, dy, theta)
         draw_line(stdscr, x1, y1, x2, y2)
 
     # Draw rotated horizontal lines
-    for y in range(-max_y, max_y, GRID_SPACING_VERT):
+    for y in range(-max_y, max_y, grid_spacing_vert):
         x1, y1 = rotate_and_translate(-max_x, y, dx, dy, theta)
         x2, y2 = rotate_and_translate(max_x, y, dx, dy, theta)
         draw_line(stdscr, x1, y1, x2, y2)
@@ -77,7 +90,7 @@ def main(stdscr):
     while True:
         stdscr.clear()
 
-        # Draw rotated & translated grid
+        # Draw rotated & dynamically scaled grid
         draw_grid(stdscr, dx, dy, theta)
 
         # Draw rover
@@ -91,9 +104,9 @@ def main(stdscr):
         elif key == curses.KEY_DOWN:
             dy -= 1  # Move grid upward (relative to rover)
         elif key == curses.KEY_LEFT:
-            theta += 0.1
+            theta += DELTA_THETA_RADIANS
         elif key == curses.KEY_RIGHT:
-            theta -= 0.1
+            theta -= DELTA_THETA_RADIANS
         elif key == ord('q'):  # Quit
             break
 
