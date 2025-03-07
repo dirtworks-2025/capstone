@@ -115,9 +115,16 @@ def get_best_fit_line(pixels):
 
     return Line(start, end)
 
-# Load and resize image
+# Load image (uncomment one of the following lines to test different images)
+
 image = cv2.imread("inputs/younger_with_drip_tape.jpg")
-image = cv2.resize(image, (0, 0), fx=0.25, fy=0.25)
+# image = cv2.imread("inputs/older_with_drip_tape.jpg")
+# image = cv2.imread("inputs/wandering_drip_tape.jpg")
+# image = cv2.imread("inputs/synthetic.png")
+
+# Resize image and crop to only show the bottom portion
+reduction_factor = 0.3
+image = cv2.resize(image, (0, 0), fx=reduction_factor, fy=reduction_factor)
 height, width = image.shape[:2]
 amount_of_top_to_crop = 0.5
 image = image[int(height * amount_of_top_to_crop):]
@@ -210,13 +217,6 @@ def update_mask(_=None):
     # Add a grey/white line at the image vertical centerline
     cv2.line(mask_with_lines, (width // 2, 0), (width // 2, height), (128, 128, 128), 2)
     cv2.line(image_with_lines, (width // 2, 0), (width // 2, height), (255, 255, 255), 2)
-
-# TODO::
-    # # Add a blue line starting from the bottom of the image centerline, pointing toward the average vertor of the two green lines
-    # if right_line_index > 0 and left_line_index > 0:
-    #     average_midpoint = ((lines[right_line_index].midpoint[0] + lines[left_line_index].midpoint[0]) // 2, (lines[right_line_index].midpoint[1] + lines[left_line_index].midpoint[1]) // 2)
-    #     cv2.line(mask_with_lines, (width // 2, height), average_midpoint, (255, 0, 0), 2)
-    #     cv2.line(image_with_lines, (width // 2, height), average_midpoint, (255, 0, 0), 2)
         
     # Create a 4x2 grid of images
     first_row = np.hstack([

@@ -35,17 +35,22 @@ s_mean = cv2.mean(hsv)[1]
 s_max = int(s_mean*0.1)
 lower = np.array([0, 0, 0])
 upper = np.array([179, s_max, 255])
-mask_raw = cv2.inRange(hsv, lower, upper)
+mask = cv2.inRange(hsv, lower, upper)
 
 # Clean the mask (reduce noise)
-kernel = np.ones((3, 3), np.uint8)  
-mask_opened = cv2.morphologyEx(mask_raw, cv2.MORPH_OPEN, kernel)
-mask_cleaned = cv2.morphologyEx(mask_opened, cv2.MORPH_CLOSE, kernel)
+open_kernel = np.ones((3, 3), np.uint8)  
+close_kernel = np.ones((5, 5), np.uint8)
+dilate_kernel = np.ones((3, 3), np.uint8)
+erode_kernel = np.ones((3, 3), np.uint8)
+mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, open_kernel)
+mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel)
+mask = cv2.dilate(mask, dilate_kernel, iterations = 20)
+mask = cv2.erode(mask, erode_kernel, iterations = 20)
 
-# Crop the mask
-x_start, y_start = 100, 50
-x_end, y_end = 300, 200
-mask_cropped = mask_cleaned[y_start:y_end, x_start:x_end]
+## Crop the mask
+#x_start, y_start = 0, 1920
+#x_end, y_end = 0, 1080
+#mask_cropped = mask_cleaned[y_start:y_end, x_start:x_end]
 
 # Save the mask
-cv2.imwrite(mask_path, mask_cropped)
+cv2.imwrite(mask_path, mask)
