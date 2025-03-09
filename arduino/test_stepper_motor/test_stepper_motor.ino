@@ -6,8 +6,8 @@
 #define LIMIT_SWITCH_1 9
 #define LIMIT_SWITCH_2 10
 
-#define SLOW_SPEED 10000
-#define FAST_SPEED 1000
+#define SLOW_SPEED 5000
+#define FAST_SPEED 2000
 
 const float IN_PER_STEP = 0.025; // Estimated distance per step (TODO: measure this and update)
 
@@ -15,7 +15,7 @@ float currentPos = 0; // Inches
 float maxPos = 0;     // Inches
 
 // Move the stepper motor a certain number of steps (positive or negative)
-void step(int steps) {
+void gantryMove(int steps) {
   digitalWrite(DIR, (steps > 0) ? HIGH : LOW);
   for (int i = 0; i < abs(steps); i++) {
     digitalWrite(STP, HIGH);
@@ -31,17 +31,17 @@ void step(int steps) {
   delayMicroseconds(100);
 }
 
-void goTo(float targetPos) {
+void gantryGoTo(float targetPos) {
   if (targetPos < 0 || targetPos > maxPos) {
     Serial.println("Error: Target position out of bounds.");
     return;
   }
   int steps = int((targetPos - currentPos) / IN_PER_STEP);
   Serial.println("Moving " + String(steps) + " steps.");
-  step(steps);
+  gantryMove(steps);
 }
 
-void home() {
+void homeGantry() {
   // Move in the negative direction until the limit switch is pressed
   digitalWrite(DIR, LOW);
   while (digitalRead(LIMIT_SWITCH_1) == HIGH) {
@@ -102,7 +102,7 @@ void setup() {
 
   delay(500);
   Serial.println("Homing...");
-  home();
+  homeGantry();
   Serial.println("Homing complete. Max position: " + String(maxPos) + " inches. Current position: " + String(currentPos) + " inches.");
   Serial.println("Ready to receive target position commands.");
 }
@@ -114,6 +114,6 @@ void loop() {
   }
   float targetPos = incomingStr.toFloat();
   Serial.println("Moving to position: " + String(targetPos) + " inches.");
-  goTo(targetPos);
+  gantryGoTo(targetPos);
   Serial.println("Moved to position: " + String(currentPos) + " inches.");
 }
