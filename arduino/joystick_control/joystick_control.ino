@@ -1,13 +1,23 @@
 #include <Arduino.h>
 
-#define EN 6  // Stepper Motor Enable, Active Low Level
-#define DIR 7 // Stepper Motor Direction Control
-#define STP 8 // Stepper Control
+// Stepper motor control pins
+#define GANTRY_EN 6
+#define GANTRY_DIR 7
+#define GANTRY_STP 8
 #define LIMIT_SWITCH_1 9
 #define LIMIT_SWITCH_2 10
-#define JOYSTICK_X A0
-#define JOYSTICK_Y A1
+#define GANTRY_JOYSTICK_X A0
+#define GANTRY_JOYSTICK_Y A1
 
+// Tank drive control pins
+#define RIGHT_FORWARD 12
+#define RIGHT_BACKWARD 13
+#define LEFT_FORWARD 14
+#define LEFT_BACKWARD 15
+#define TANK_JOYSTICK_X A2
+#define TANK_JOYSTICK_Y A3
+
+// Stepper motor constants
 #define SLOW_SPEED 5000
 #define FAST_SPEED 2000
 
@@ -19,12 +29,12 @@ float maxPos = 0;     // Inches
 // Move the stepper motor a certain number of steps (positive or negative)
 void gantryMove(int steps, int speed = FAST_SPEED)
 {
-    digitalWrite(DIR, (steps > 0) ? HIGH : LOW);
+    digitalWrite(GANTRY_DIR, (steps > 0) ? HIGH : LOW);
     for (int i = 0; i < abs(steps); i++)
     {
-        digitalWrite(STP, HIGH);
+        digitalWrite(GANTRY_STP, HIGH);
         delayMicroseconds(FAST_SPEED);
-        digitalWrite(STP, LOW);
+        digitalWrite(GANTRY_STP, LOW);
         delayMicroseconds(FAST_SPEED);
         currentPos += IN_PER_STEP * (steps > 0 ? 1 : -1);
         if (digitalRead(LIMIT_SWITCH_1) == LOW || digitalRead(LIMIT_SWITCH_2) == LOW)
@@ -51,23 +61,23 @@ void gantryGoTo(float targetPos)
 void homeGantry()
 {
     // Move in the negative direction until the limit switch is pressed
-    digitalWrite(DIR, LOW);
+    digitalWrite(GANTRY_DIR, LOW);
     while (digitalRead(LIMIT_SWITCH_1) == HIGH)
     {
-        digitalWrite(STP, HIGH);
+        digitalWrite(GANTRY_STP, HIGH);
         delayMicroseconds(SLOW_SPEED);
-        digitalWrite(STP, LOW);
+        digitalWrite(GANTRY_STP, LOW);
         delayMicroseconds(SLOW_SPEED);
     }
     delayMicroseconds(100);
 
     // Move back until the limit switch is no longer pressed
-    digitalWrite(DIR, HIGH);
+    digitalWrite(GANTRY_DIR, HIGH);
     while (digitalRead(LIMIT_SWITCH_1) == LOW)
     {
-        digitalWrite(STP, HIGH);
+        digitalWrite(GANTRY_STP, HIGH);
         delayMicroseconds(SLOW_SPEED);
-        digitalWrite(STP, LOW);
+        digitalWrite(GANTRY_STP, LOW);
         delayMicroseconds(SLOW_SPEED);
     }
     delayMicroseconds(100);
@@ -75,24 +85,24 @@ void homeGantry()
     currentPos = 0;
 
     // Move in the positive direction until the limit switch is pressed
-    digitalWrite(DIR, HIGH);
+    digitalWrite(GANTRY_DIR, HIGH);
     while (digitalRead(LIMIT_SWITCH_2) == HIGH)
     {
-        digitalWrite(STP, HIGH);
+        digitalWrite(GANTRY_STP, HIGH);
         delayMicroseconds(SLOW_SPEED);
-        digitalWrite(STP, LOW);
+        digitalWrite(GANTRY_STP, LOW);
         delayMicroseconds(SLOW_SPEED);
         currentPos += IN_PER_STEP;
     }
     delayMicroseconds(100);
 
     // Move back until the limit switch is no longer pressed
-    digitalWrite(DIR, LOW);
+    digitalWrite(GANTRY_DIR, LOW);
     while (digitalRead(LIMIT_SWITCH_2) == LOW)
     {
-        digitalWrite(STP, HIGH);
+        digitalWrite(GANTRY_STP, HIGH);
         delayMicroseconds(SLOW_SPEED);
-        digitalWrite(STP, LOW);
+        digitalWrite(GANTRY_STP, LOW);
         delayMicroseconds(SLOW_SPEED);
         currentPos -= IN_PER_STEP;
     }
@@ -107,7 +117,7 @@ void maybeMoveGantry()
     // This function is blocking when the joystick is outside the deadzone
     // TODO: add threads to make this non-blocking to enable gantry movement while driving
     while (true) {
-        int x = analogRead(JOYSTICK_X);
+        int x = analogRead(GANTRY_JOYSTICK_X);
         int xNormalized = map(x, 0, 1023, -1, 1);
 
         // Set deadzone
@@ -124,28 +134,119 @@ void maybeMoveGantry()
     }
 }
 
-void setup()
+void maybeMoveTankDrive()
 {
-    pinMode(DIR, OUTPUT);
-    pinMode(STP, OUTPUT);
-    pinMode(EN, OUTPUT);
+    // Continuously read the joystick and move the tank drive while the joystick is outside the deadzone
+    // This function is blocking when the joystick is outside the deadzone
+
+    while (true) {
+        int x = analogRead(TANK_JOYSTICK_X);
+        int y = analogRead(TANK_JOYSTICK_Y);
+        float xNormalized = map(x, 0, 1023, -100, 100) / 100.0;
+        float yNormalized = map(y, 0, 1023, -100, 100) / 100.0;
+
+        // Set deadzone per axis
+        if (abs(xNormalized) < 0.1)
+        {
+            xNormalized = 0.0;
+        }
+        if (abs(yNormalized) < 0.1)
+        {
+            yNormalized = 0.0;
+        }
+
+        // Escape if both axes are in the deadzone
+        if (xNormalized == 0.0 && yNormalized == 0.0)
+        {
+            return;
+        }
+
+        // Get speed values
+        // Funny enough, the transformation from (x,y) to (L,R) is a 45 degree rotation
+        float rightSpeed = (yNormalized + xNormalized) * (255 / 2);
+        float leftSpeed = (yNormalized - xNormalized) * (255 / 2);
+
+        // Move the tank drive
+        if (rightSpeed > 0.0)
+        {
+            analogWrite(RIGHT_FORWARD, rightSpeed);
+            analogWrite(RIGHT_BACKWARD, 0);
+        }
+        else if (rightSpeed < 0.0)
+        {
+            analogWrite(RIGHT_BACKWARD, -rightSpeed);
+            analogWrite(RIGHT_FORWARD, 0);
+        }
+        else
+        {
+            analogWrite(RIGHT_FORWARD, 0);
+            analogWrite(RIGHT_BACKWARD, 0);
+        }
+
+        if (leftSpeed > 0.0)
+        {
+            analogWrite(LEFT_FORWARD, leftSpeed);
+            analogWrite(LEFT_BACKWARD, 0);
+        }
+        else if (leftSpeed < 0.0)
+        {
+            analogWrite(LEFT_BACKWARD, -leftSpeed);
+            analogWrite(LEFT_FORWARD, 0);
+        }
+        else
+        {
+            analogWrite(LEFT_FORWARD, 0);
+            analogWrite(LEFT_BACKWARD, 0);
+        }
+    }
+}
+
+void initializeGantry()
+{
+    pinMode(GANTRY_DIR, OUTPUT);
+    pinMode(GANTRY_STP, OUTPUT);
+    pinMode(GANTRY_EN, OUTPUT);
     pinMode(LIMIT_SWITCH_1, INPUT_PULLUP);
     pinMode(LIMIT_SWITCH_2, INPUT_PULLUP);
-    pinMode(JOYSTICK_X, INPUT);
-    pinMode(JOYSTICK_Y, INPUT);
+    pinMode(GANTRY_JOYSTICK_X, INPUT);
+    pinMode(GANTRY_JOYSTICK_Y, INPUT);
 
-    digitalWrite(EN, LOW);
-    Serial.setTimeout(200);
-    Serial.begin(115200);
-
-    delay(500);
-    Serial.println("Homing...");
+    digitalWrite(GANTRY_EN, LOW);
+    
+    // Home the gantry
     homeGantry();
     Serial.println("Homing complete. Max position: " + String(maxPos) + " inches. Current position: " + String(currentPos) + " inches.");
 }
 
+void initializeTankDrive()
+{
+    pinMode(RIGHT_FORWARD, OUTPUT);
+    pinMode(RIGHT_BACKWARD, OUTPUT);
+    pinMode(LEFT_FORWARD, OUTPUT);
+    pinMode(LEFT_BACKWARD, OUTPUT);
+
+    digitalWrite(RIGHT_FORWARD, LOW);
+    digitalWrite(RIGHT_BACKWARD, LOW);
+    digitalWrite(LEFT_FORWARD, LOW);
+    digitalWrite(LEFT_BACKWARD, LOW);
+
+    pinMode(TANK_JOYSTICK_X, INPUT);
+    pinMode(TANK_JOYSTICK_Y, INPUT);
+    
+    Serial.println("Tank drive initialized.");
+}
+
+void setup()
+{
+    Serial.begin(115200);
+    delay(500);
+    initializeTankDrive();
+    initializeGantry();
+}
+
 void loop()
 {
+    maybeMoveTankDrive();
     maybeMoveGantry();
     delay(100);
 }
