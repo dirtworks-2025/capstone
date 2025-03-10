@@ -1,21 +1,23 @@
 #include <Arduino.h>
 
+// Joystick pins
+#define GANTRY_JOYSTICK_Y A0
+#define GANTRY_JOYSTICK_X A1
+#define TANK_JOYSTICK_Y A2
+#define TANK_JOYSTICK_X A3
+
 // Stepper motor control pins
-#define GANTRY_EN 6
-#define GANTRY_DIR 7
-#define GANTRY_STP 8
-#define LIMIT_SWITCH_1 9
-#define LIMIT_SWITCH_2 10
-#define GANTRY_JOYSTICK_X A0
-#define GANTRY_JOYSTICK_Y A1
+#define GANTRY_EN 22
+#define GANTRY_DIR 23
+#define GANTRY_STP 24
+#define LIMIT_SWITCH_1 28
+#define LIMIT_SWITCH_2 29
 
 // Tank drive control pins
-#define RIGHT_FORWARD 12
-#define RIGHT_BACKWARD 13
-#define LEFT_FORWARD 14
-#define LEFT_BACKWARD 15
-#define TANK_JOYSTICK_X A2
-#define TANK_JOYSTICK_Y A3
+#define RIGHT_FORWARD 5
+#define RIGHT_BACKWARD 4
+#define LEFT_FORWARD 2
+#define LEFT_BACKWARD 3
 
 // Stepper motor constants
 #define SLOW_SPEED 5000
@@ -24,6 +26,7 @@
 const float IN_PER_STEP = 0.025; // Estimated distance per step (TODO: measure this and update)
 
 float currentPos = 0; // Inches
+float minPos = 0;     // Inches
 float maxPos = 0;     // Inches
 
 // Move the stepper motor a certain number of steps (positive or negative)
@@ -32,16 +35,25 @@ void gantryMove(int steps, int speed = FAST_SPEED)
     digitalWrite(GANTRY_DIR, (steps > 0) ? HIGH : LOW);
     for (int i = 0; i < abs(steps); i++)
     {
-        digitalWrite(GANTRY_STP, HIGH);
-        delayMicroseconds(FAST_SPEED);
-        digitalWrite(GANTRY_STP, LOW);
-        delayMicroseconds(FAST_SPEED);
         currentPos += IN_PER_STEP * (steps > 0 ? 1 : -1);
+        // Check for limit switch press
         if (digitalRead(LIMIT_SWITCH_1) == LOW || digitalRead(LIMIT_SWITCH_2) == LOW)
         {
             Serial.println("Error: Limit switch pressed.");
             return;
         }
+        // Check for soft limits
+        if (currentPos < minPos || currentPos > maxPos)
+        {
+            Serial.println("Error: Soft limits exceeded.");
+            return;
+        }
+
+        // Move the stepper motor
+        digitalWrite(GANTRY_STP, HIGH);
+        delayMicroseconds(speed);
+        digitalWrite(GANTRY_STP, LOW);
+        delayMicroseconds(speed);
     }
 }
 
@@ -53,7 +65,6 @@ void gantryGoTo(float targetPos)
         return;
     }
     int steps = int((targetPos - currentPos) / IN_PER_STEP);
-    Serial.println("Moving " + String(steps) + " steps.");
     gantryMove(steps);
     delayMicroseconds(100);
 }
@@ -96,9 +107,13 @@ void homeGantry()
     }
     delayMicroseconds(100);
 
-    // Move back until the limit switch is no longer pressed
+    // Set 2 inch soft limits
+    maxPos = currentPos - 2;
+    minPos = 2;
+
+    // Move back until outside the soft limits
     digitalWrite(GANTRY_DIR, LOW);
-    while (digitalRead(LIMIT_SWITCH_2) == LOW)
+    while (currentPos > maxPos)
     {
         digitalWrite(GANTRY_STP, HIGH);
         delayMicroseconds(SLOW_SPEED);
@@ -107,8 +122,6 @@ void homeGantry()
         currentPos -= IN_PER_STEP;
     }
     delayMicroseconds(100);
-
-    maxPos = currentPos;
 }
 
 void maybeMoveGantry()
@@ -118,18 +131,19 @@ void maybeMoveGantry()
     // TODO: add threads to make this non-blocking to enable gantry movement while driving
     while (true) {
         int x = analogRead(GANTRY_JOYSTICK_X);
-        int xNormalized = map(x, 0, 1023, -1, 1);
+        int xNormalized = map(x, 0, 1023, -100, 100);
 
         // Set deadzone
-        if (abs(xNormalized) < 0.1)
+        if (abs(xNormalized) < 10)
         {
             return;
         }
 
-        int stepDelay = map(abs(xNormalized), 0, 1, 20000, 1000);
+        int stepDelay = map(abs(xNormalized), 0, 100, 5000, 1500);
+        Serial.println("Step delay: " + String(stepDelay));
 
         // Move the gantry
-        int stepsPerLoop = 10;
+        int stepsPerLoop = 5;
         gantryMove(xNormalized > 0 ? stepsPerLoop : -stepsPerLoop, stepDelay);
     }
 }
@@ -158,13 +172,18 @@ void maybeMoveTankDrive()
         // Escape if both axes are in the deadzone
         if (xNormalized == 0.0 && yNormalized == 0.0)
         {
+            analogWrite(RIGHT_FORWARD, 0);
+            analogWrite(RIGHT_BACKWARD, 0);
+            analogWrite(LEFT_FORWARD, 0);
+            analogWrite(LEFT_BACKWARD, 0);
             return;
         }
 
         // Get speed values
         // Funny enough, the transformation from (x,y) to (L,R) is a 45 degree rotation
-        float rightSpeed = (yNormalized + xNormalized) * (255 / 2);
-        float leftSpeed = (yNormalized - xNormalized) * (255 / 2);
+        float speedLimit = 0.4;
+        float leftSpeed = (yNormalized + xNormalized) * (255 / 2) * speedLimit;
+        float rightSpeed = (yNormalized - xNormalized) * (255 / 2) * speedLimit;
 
         // Move the tank drive
         if (rightSpeed > 0.0)
@@ -214,6 +233,7 @@ void initializeGantry()
     digitalWrite(GANTRY_EN, LOW);
     
     // Home the gantry
+    Serial.println("Homing gantry...");
     homeGantry();
     Serial.println("Homing complete. Max position: " + String(maxPos) + " inches. Current position: " + String(currentPos) + " inches.");
 }
