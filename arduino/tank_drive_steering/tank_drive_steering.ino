@@ -1,7 +1,7 @@
 #include <Arduino.h>
 
 const int RIGHT_FORWARD = 5;
-const int RIGHT_BACKWARD = 6;
+const int RIGHT_BACKWARD = 4;
 const int LEFT_FORWARD = 2;
 const int LEFT_BACKWARD = 3;
 
@@ -48,8 +48,8 @@ void loop()
     // delay(100);
 
     // Get speed values
-    float right_speed = (y_norm + x_norm) * (255 / 2);
-    float left_speed = (y_norm - x_norm) * (255 / 2);
+    float right_speed = (y_norm + x_norm) * (255 / 5);
+    float left_speed = (y_norm - x_norm) * (255 / 5);
 
     // Serial.println("R: " + String(right_speed) + " L: " + String(left_speed));
     // delay(100);
