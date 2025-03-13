@@ -1,39 +1,12 @@
-from fastapi import FastAPI, WebSocket
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
+from fastapi.responses import StreamingResponse
 import json
-from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaPlayer
+import cv2
 
 app = FastAPI()
-pcs = set()
-
-from aiortc.contrib.media import MediaStreamTrack
-import cv2
-import av
-
-class WebcamVideoStreamTrack(MediaStreamTrack):
-    kind = "video"
-
-    def __init__(self):
-        super().__init__()
-        self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
-            raise RuntimeError("Could not open video source")
-
-    async def recv(self):
-        ret, frame = self.cap.read()
-        if not ret:
-            print("Error: Failed to capture frame.")
-            return None
-        
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        av_frame = av.VideoFrame.from_ndarray(frame, format="rgb24")
-        av_frame.pts = None  # Avoid timestamp issues
-        return av_frame
-
 
 # Mount the "static" folder for serving JS and other static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -45,29 +18,21 @@ templates = Jinja2Templates(directory="templates")
 def serve_home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    pc = RTCPeerConnection()
-    pcs.add(pc)
+captures = {
+    "front": cv2.VideoCapture(0),
+    "rear": cv2.VideoCapture(0),
+}
 
-    track = WebcamVideoStreamTrack()
-    print("Created video track:", track)
-    pc.addTransceiver("video", direction="sendonly")
-    pc.addTrack(track)
-
-
+def generate_frames(cap: cv2.VideoCapture):
     while True:
-        data = await websocket.receive_text()
-        message = json.loads(data)
+        success, frame = cap.read()
+        if not success:
+            break
+        _, buffer = cv2.imencode(".jpg", frame)  # Encode frame as JPEG
+        yield (b"--frame\r\n"
+               b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n")
 
-        if message["type"] == "offer":
-            offer = RTCSessionDescription(sdp=message["sdp"], type=message["type"])
-            print("Received offer:", offer.sdp)
-            await pc.setRemoteDescription(offer)
-            answer = await pc.createAnswer()
-            print("Created answer:", answer.sdp)
-            await pc.setLocalDescription(answer)
-            print("Set local description")
-            await websocket.send_text(json.dumps({"type": "answer", "sdp": pc.localDescription.sdp}))
-            print("Sent answer")
+@app.get("/video/{cam_id}")
+def video_feed(cam_id: str):
+    cap = captures[cam_id]
+    return StreamingResponse(generate_frames(cap), media_type="multipart/x-mixed-replace; boundary=frame")
