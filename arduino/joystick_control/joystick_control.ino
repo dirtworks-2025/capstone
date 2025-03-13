@@ -35,7 +35,6 @@ void gantryMove(int steps, int speed = FAST_SPEED)
     digitalWrite(GANTRY_DIR, (steps > 0) ? HIGH : LOW);
     for (int i = 0; i < abs(steps); i++)
     {
-        float nextPos = IN_PER_STEP * (steps > 0 ? 1 : -1);
         // Check for limit switch press
         if (digitalRead(LIMIT_SWITCH_1) == LOW || digitalRead(LIMIT_SWITCH_2) == LOW)
         {
@@ -43,6 +42,7 @@ void gantryMove(int steps, int speed = FAST_SPEED)
             return;
         }
         // Check for soft limits
+        float nextPos = IN_PER_STEP * (steps > 0 ? 1 : -1);
         if (nextPos < minPos || nextPos > maxPos)
         {
             Serial.println("Error: Soft limits exceeded.");
