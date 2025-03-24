@@ -42,7 +42,7 @@ void gantryMove(int steps, int speed = FAST_SPEED)
             return;
         }
         // Check for soft limits
-        float nextPos = IN_PER_STEP * (steps > 0 ? 1 : -1);
+        float nextPos = currentPos + IN_PER_STEP * (steps > 0 ? 1 : -1);
         if (nextPos < minPos || nextPos > maxPos)
         {
             Serial.println("Error: Soft limits exceeded.");
