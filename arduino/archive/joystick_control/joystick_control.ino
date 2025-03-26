@@ -184,7 +184,7 @@ void maybeMoveTankDrive()
 
         // Get speed values
         // Funny enough, the transformation from (x,y) to (L,R) is a 45 degree rotation
-        float speedLimit = 0.4;
+        float speedLimit = 0.6;
         float leftSpeed = (yNormalized + xNormalized) * (255 / 2) * speedLimit;
         float rightSpeed = (yNormalized - xNormalized) * (255 / 2) * speedLimit;
 

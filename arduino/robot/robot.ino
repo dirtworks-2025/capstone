@@ -54,12 +54,6 @@ void runReadyTasks()
     }
 }
 
-// Joystick pins
-#define GANTRY_JOYSTICK_Y A0
-#define GANTRY_JOYSTICK_X A1
-#define TANK_JOYSTICK_Y A2
-#define TANK_JOYSTICK_X A3
-
 // Stepper motor control pins
 #define GANTRY_EN 22
 #define GANTRY_DIR 23
@@ -78,6 +72,7 @@ const float IN_PER_STEP = 0.025; // Estimated distance per step
 float currentPos = 0; // Inches
 float minPos = 0;     // Inches
 float maxPos = 0;     // Inches
+bool gantryHomed = false;
 
 // Standard delays
 #define HOMING_STEP_DELAY_MS 10
@@ -165,6 +160,7 @@ void stepReverseUntilSoftLimits() {
     if (currentPos > maxPos) {
         insertTask(HOMING_STEP_DELAY_MS, stepReverseUntilSoftLimits);
     } else {
+        gantryHomed = true;
         Serial.println("Homing complete. Max position: " + String(maxPos) + " inches. Current position: " + String(currentPos) + " inches.");
     }
 }
@@ -178,12 +174,11 @@ void homeGantry()
 // and schedule the next step based on the given delay
 void maybeMoveGantry()
 {
-    if (gantryStepDelayMs != 0)
-    {
+    if (gantryStepDelayMs == 0 || !gantryHomed) {
+        insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
+    } else {
         gantryStep(gantryStepDelayMs > 0);
         insertTask(abs(gantryStepDelayMs), maybeMoveGantry);
-    } else {
-        insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
     }
 }
 
@@ -224,53 +219,6 @@ void maybeMoveTankDrive()
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
 }
 
-void interpretTankJoystick()
-{
-    int x = analogRead(TANK_JOYSTICK_X);
-    int y = analogRead(TANK_JOYSTICK_Y);
-    float xNormalized = map(x, 0, 1023, -100, 100) / 100.0;
-    float yNormalized = map(y, 0, 1023, -100, 100) / 100.0;
-
-    // Set deadzone per axis
-    if (abs(xNormalized) < 0.1)
-    {
-        xNormalized = 0.0;
-    }
-    if (abs(yNormalized) < 0.1)
-    {
-        yNormalized = 0.0;
-    }
-
-    // Escape if both axes are in the deadzone
-    if (xNormalized == 0.0 && yNormalized == 0.0)
-    {
-        rightTankDriveSpeed = 0;
-        leftTankDriveSpeed = 0;
-        return;
-    }
-
-    // Set tank drive speeds
-    float speedLimit = 0.6;
-    rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * speedLimit;
-    leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * speedLimit;
-}
-
-void interpretGantryJoystick() 
-{
-    int x = analogRead(GANTRY_JOYSTICK_X);
-    int xNormalized = map(x, 0, 1023, -100, 100);
-
-    // Set deadzone
-    if (abs(xNormalized) < 10)
-    {
-        gantryStepDelayMs = 0;
-        return;
-    }
-
-    int stepDelay = map(abs(xNormalized), 0, 100, 5000, 1500);
-    gantryStepDelayMs = xNormalized > 0 ? stepDelay : -stepDelay;
-}
-
 void initializeGantry()
 {
     pinMode(GANTRY_DIR, OUTPUT);
@@ -278,8 +226,6 @@ void initializeGantry()
     pinMode(GANTRY_EN, OUTPUT);
     pinMode(LIMIT_SWITCH_1, INPUT_PULLUP);
     pinMode(LIMIT_SWITCH_2, INPUT_PULLUP);
-    pinMode(GANTRY_JOYSTICK_X, INPUT);
-    pinMode(GANTRY_JOYSTICK_Y, INPUT);
 
     digitalWrite(GANTRY_EN, LOW);
 
@@ -299,9 +245,6 @@ void initializeTankDrive()
     digitalWrite(RIGHT_BACKWARD, LOW);
     digitalWrite(LEFT_FORWARD, LOW);
     digitalWrite(LEFT_BACKWARD, LOW);
-
-    pinMode(TANK_JOYSTICK_X, INPUT);
-    pinMode(TANK_JOYSTICK_Y, INPUT);
 }
 
 void setup()
@@ -314,9 +257,45 @@ void setup()
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
 }
 
+// Command types:
+// tank <leftSpeed> <rightSpeed>
+// gantry <delayMs>
+// Note: Commands are first interpretted generically as <token1> <token2> <token3>
+void maybeInterpretCmd()
+{
+    if (Serial.available() > 0)
+    {
+        String cmd = Serial.readStringUntil('\n');
+        String tokens[3];
+        int charIdx = 0;
+        int tokenIdx = 0;
+        while (charIdx < cmd.length())
+        {
+            if (cmd[charIdx] == ' ')
+            {
+                tokenIdx++;
+            }
+            else
+            {
+                tokens[tokenIdx] += cmd[charIdx];
+            }
+            charIdx++;
+        }
+
+        if (tokens[0] == "tank")
+        {
+            rightTankDriveSpeed = tokens[1].toInt();
+            leftTankDriveSpeed = tokens[2].toInt();
+        }
+        else if (tokens[0] == "gantry")
+        {
+            gantryStepDelayMs = tokens[1].toInt();
+        }
+    }
+}
+
 void loop()
 {
-    interpretTankJoystick();
-    interpretGantryJoystick();
+    maybeInterpretCmd();
     runReadyTasks();
 }
