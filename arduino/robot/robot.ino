@@ -22,20 +22,6 @@ bool insertTask(unsigned long delayMs, void (*callback)())
             tasks[i].inUse = true;
             return true;
         }
-        return false;
-    }
-}
-
-bool maybeRunOneReadyTask()
-{
-    for (uint8_t i = 0; i < MAX_TASKS; i++)
-    {
-        if (tasks[i].inUse && tasks[i].scheduledTime <= millis())
-        {
-            tasks[i].callback();
-            tasks[i].inUse = false;
-            return true;
-        }
     }
     return false;
 }
@@ -79,28 +65,32 @@ bool gantryHomed = false;
 #define AWAIT_NEXT_CMD_MS 100
 
 // Current move commands
-int gantryStepDelayMs = 0; // Delay between steps in milliseconds (0 = stopped, positive = forward, negative = reverse)
+float gantryStepDelayMs = 0; // Delay between steps in milliseconds (0 = stopped, positive = forward, negative = reverse)
 int rightTankDriveSpeed = 0;
 int leftTankDriveSpeed = 0;
 
-void checkGantryLimits(float nextPos)
+
+bool isGantryAtLimit(float nextPos)
 {
     if (digitalRead(LIMIT_SWITCH_1) == LOW || digitalRead(LIMIT_SWITCH_2) == LOW)
     {
         Serial.println("Error: Limit switch pressed.");
+        return true;
     }
     if (nextPos < minPos || nextPos > maxPos)
     {
         Serial.println("Error: Soft limits exceeded.");
+        return true;
     }
+    return false;
 }
 
 void gantryStep(bool dir, bool ignoreLimits = false)
 {
     float nextPos = currentPos + IN_PER_STEP * (dir ? 1 : -1);
-    if (!ignoreLimits)
+    if (!ignoreLimits && isGantryAtLimit(nextPos))
     {
-        checkGantryLimits(nextPos);
+        return;
     }
 
     digitalWrite(GANTRY_DIR, dir ? HIGH : LOW);
@@ -191,8 +181,8 @@ void maybeMoveTankDrive()
     }
     else if (rightTankDriveSpeed < 0)
     {
-        analogWrite(RIGHT_BACKWARD, -rightTankDriveSpeed);
         analogWrite(RIGHT_FORWARD, 0);
+        analogWrite(RIGHT_BACKWARD, -rightTankDriveSpeed);
     }
     else
     {
@@ -202,13 +192,13 @@ void maybeMoveTankDrive()
 
     if (leftTankDriveSpeed > 0)
     {
-        analogWrite(LEFT_BACKWARD, -leftTankDriveSpeed);
-        analogWrite(LEFT_FORWARD, 0);
+        analogWrite(LEFT_FORWARD, leftTankDriveSpeed);
+        analogWrite(LEFT_BACKWARD, 0);
     }
     else if (leftTankDriveSpeed < 0)
     {
-        analogWrite(LEFT_FORWARD, leftTankDriveSpeed);
-        analogWrite(LEFT_BACKWARD, 0);
+        analogWrite(LEFT_FORWARD, 0);
+        analogWrite(LEFT_BACKWARD, -leftTankDriveSpeed);
     }
     else
     {
