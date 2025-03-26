@@ -42,7 +42,7 @@ bool maybeRunOneReadyTask()
 
 // Run up to MAX_TASKS ready tasks
 // This function is blocking, but has a limited number of iterations to prevent infinite loops
-void runReadyTasks()
+void runAllReadyTasks()
 {
     for (uint8_t i = 0; i < MAX_TASKS; i++)
     {
@@ -167,7 +167,7 @@ void stepReverseUntilSoftLimits() {
 
 void homeGantry()
 {
-    insertTask(HOMING_STEP_DELAY_MS, stepReverseUntilLimitSwitch);
+    insertTask(0, stepReverseUntilLimitSwitch);
 }
 
 // If the gantry is enabled, take a step in the given direction
@@ -253,6 +253,8 @@ void setup()
     delay(500);
     initializeGantry();
     initializeTankDrive();
+    // Schedule the first move tasks
+    // These tasks will infinitely reschedule themselves until the program is terminated
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
 }
@@ -297,5 +299,5 @@ void maybeInterpretCmd()
 void loop()
 {
     maybeInterpretCmd();
-    runReadyTasks();
+    runAllReadyTasks();
 }

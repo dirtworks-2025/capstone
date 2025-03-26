@@ -10,7 +10,7 @@
 // tank <leftSpeed> <rightSpeed>
 // gantry <speed>
 
-void maybeSendTankCmd()
+void sendTankCmd()
 {
     int x = analogRead(TANK_JOYSTICK_X);
     int y = analogRead(TANK_JOYSTICK_Y);
@@ -30,18 +30,18 @@ void maybeSendTankCmd()
     // Escape if both axes are in the deadzone
     if (xNormalized == 0.0 && yNormalized == 0.0)
     {
-        rightTankDriveSpeed = 0;
-        leftTankDriveSpeed = 0;
+        sendCmd("tank 0 0");
         return;
     }
 
     // Set tank drive speeds
     float speedLimit = 0.6;
-    rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * speedLimit;
-    leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * speedLimit;
+    int rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * speedLimit;
+    int leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * speedLimit;
+    sendCmd("tank " + String(leftTankDriveSpeed) + " " + String(rightTankDriveSpeed));
 }
 
-void maybeSendGantryCmd() 
+void sendGantryCmd() 
 {
     int x = analogRead(GANTRY_JOYSTICK_X);
     int xNormalized = map(x, 0, 1023, -100, 100);
@@ -49,10 +49,29 @@ void maybeSendGantryCmd()
     // Set deadzone
     if (abs(xNormalized) < 10)
     {
-        gantryStepDelayMs = 0;
+        sendCmd("gantry 0");
         return;
     }
 
     int stepDelay = map(abs(xNormalized), 0, 100, 5000, 1500);
-    gantryStepDelayMs = xNormalized > 0 ? stepDelay : -stepDelay;
+    int gantryStepDelayMs = xNormalized > 0 ? stepDelay : -stepDelay;
+    sendCmd("gantry " + String(gantryStepDelayMs));
+}
+
+void sendCmd(String cmd)
+{
+    Serial.println(cmd);
+}
+
+void setup()
+{
+    Serial.begin(9600);
+    delay(500);
+}
+
+void loop()
+{
+    sendTankCmd();
+    sendGantryCmd();
+    delay(100);
 }
