@@ -40,10 +40,25 @@ bool maybeRunOneReadyTask()
     return false;
 }
 
-void runAllReadyTasks()
+// Run up to MAX_TASKS ready tasks
+// This function is blocking, but has a limited number of iterations to prevent infinite loops
+void runReadyTasks()
 {
-    while (maybeRunOneReadyTask());
+    for (uint8_t i = 0; i < MAX_TASKS; i++)
+    {
+        if (tasks[i].inUse && tasks[i].scheduledTime <= millis())
+        {
+            tasks[i].callback();
+            tasks[i].inUse = false;
+        }
+    }
 }
+
+// Joystick pins
+#define GANTRY_JOYSTICK_Y A0
+#define GANTRY_JOYSTICK_X A1
+#define TANK_JOYSTICK_Y A2
+#define TANK_JOYSTICK_X A3
 
 // Stepper motor control pins
 #define GANTRY_EN 22
@@ -66,11 +81,12 @@ float maxPos = 0;     // Inches
 
 // Standard delays
 #define HOMING_STEP_DELAY_MS 10
-#define 
+#define AWAIT_NEXT_CMD_MS 100
 
 // Current move commands
 int gantryStepDelayMs = 0; // Delay between steps in milliseconds (0 = stopped, positive = forward, negative = reverse)
-bool enableGantry = false;
+int rightTankDriveSpeed = 0;
+int leftTankDriveSpeed = 0;
 
 void checkGantryLimits(float nextPos)
 {
@@ -149,7 +165,7 @@ void stepReverseUntilSoftLimits() {
     if (currentPos > maxPos) {
         insertTask(HOMING_STEP_DELAY_MS, stepReverseUntilSoftLimits);
     } else {
-        enableGantry = false;
+        Serial.println("Homing complete. Max position: " + String(maxPos) + " inches. Current position: " + String(currentPos) + " inches.");
     }
 }
 
@@ -162,13 +178,97 @@ void homeGantry()
 // and schedule the next step based on the given delay
 void maybeMoveGantry()
 {
-    if (enableGantry)
+    if (gantryStepDelayMs != 0)
     {
         gantryStep(gantryStepDelayMs > 0);
         insertTask(abs(gantryStepDelayMs), maybeMoveGantry);
     } else {
-        insertTask(HOMING_STEP_DELAY_MS, stepReverseUntilSoftLimits);
+        insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
     }
+}
+
+void maybeMoveTankDrive()
+{
+    if (rightTankDriveSpeed > 0)
+    {
+        analogWrite(RIGHT_FORWARD, rightTankDriveSpeed);
+        analogWrite(RIGHT_BACKWARD, 0);
+    }
+    else if (rightTankDriveSpeed < 0)
+    {
+        analogWrite(RIGHT_BACKWARD, -rightTankDriveSpeed);
+        analogWrite(RIGHT_FORWARD, 0);
+    }
+    else
+    {
+        analogWrite(RIGHT_FORWARD, 0);
+        analogWrite(RIGHT_BACKWARD, 0);
+    }
+
+    if (leftTankDriveSpeed > 0)
+    {
+        analogWrite(LEFT_BACKWARD, -leftTankDriveSpeed);
+        analogWrite(LEFT_FORWARD, 0);
+    }
+    else if (leftTankDriveSpeed < 0)
+    {
+        analogWrite(LEFT_FORWARD, leftTankDriveSpeed);
+        analogWrite(LEFT_BACKWARD, 0);
+    }
+    else
+    {
+        analogWrite(LEFT_FORWARD, 0);
+        analogWrite(LEFT_BACKWARD, 0);
+    }
+
+    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
+}
+
+void interpretTankJoystick()
+{
+    int x = analogRead(TANK_JOYSTICK_X);
+    int y = analogRead(TANK_JOYSTICK_Y);
+    float xNormalized = map(x, 0, 1023, -100, 100) / 100.0;
+    float yNormalized = map(y, 0, 1023, -100, 100) / 100.0;
+
+    // Set deadzone per axis
+    if (abs(xNormalized) < 0.1)
+    {
+        xNormalized = 0.0;
+    }
+    if (abs(yNormalized) < 0.1)
+    {
+        yNormalized = 0.0;
+    }
+
+    // Escape if both axes are in the deadzone
+    if (xNormalized == 0.0 && yNormalized == 0.0)
+    {
+        rightTankDriveSpeed = 0;
+        leftTankDriveSpeed = 0;
+        return;
+    }
+
+    // Set tank drive speeds
+    float speedLimit = 0.6;
+    rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * speedLimit;
+    leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * speedLimit;
+}
+
+void interpretGantryJoystick() 
+{
+    int x = analogRead(GANTRY_JOYSTICK_X);
+    int xNormalized = map(x, 0, 1023, -100, 100);
+
+    // Set deadzone
+    if (abs(xNormalized) < 10)
+    {
+        gantryStepDelayMs = 0;
+        return;
+    }
+
+    int stepDelay = map(abs(xNormalized), 0, 100, 5000, 1500);
+    gantryStepDelayMs = xNormalized > 0 ? stepDelay : -stepDelay;
 }
 
 void initializeGantry()
@@ -178,6 +278,8 @@ void initializeGantry()
     pinMode(GANTRY_EN, OUTPUT);
     pinMode(LIMIT_SWITCH_1, INPUT_PULLUP);
     pinMode(LIMIT_SWITCH_2, INPUT_PULLUP);
+    pinMode(GANTRY_JOYSTICK_X, INPUT);
+    pinMode(GANTRY_JOYSTICK_Y, INPUT);
 
     digitalWrite(GANTRY_EN, LOW);
 
@@ -186,9 +288,35 @@ void initializeGantry()
     homeGantry();
 }
 
+void initializeTankDrive()
+{
+    pinMode(RIGHT_FORWARD, OUTPUT);
+    pinMode(RIGHT_BACKWARD, OUTPUT);
+    pinMode(LEFT_FORWARD, OUTPUT);
+    pinMode(LEFT_BACKWARD, OUTPUT);
+
+    digitalWrite(RIGHT_FORWARD, LOW);
+    digitalWrite(RIGHT_BACKWARD, LOW);
+    digitalWrite(LEFT_FORWARD, LOW);
+    digitalWrite(LEFT_BACKWARD, LOW);
+
+    pinMode(TANK_JOYSTICK_X, INPUT);
+    pinMode(TANK_JOYSTICK_Y, INPUT);
+}
+
 void setup()
 {
     Serial.begin(9600);
     delay(500);
     initializeGantry();
+    initializeTankDrive();
+    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
+    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
+}
+
+void loop()
+{
+    interpretTankJoystick();
+    interpretGantryJoystick();
+    runReadyTasks();
 }
