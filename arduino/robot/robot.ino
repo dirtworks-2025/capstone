@@ -48,10 +48,14 @@ void runAllReadyTasks()
 #define LIMIT_SWITCH_2 29
 
 // Tank drive control pins
-#define RIGHT_FORWARD 5
-#define RIGHT_BACKWARD 4
-#define LEFT_FORWARD 2
-#define LEFT_BACKWARD 3
+#define RIGHT_FORWARD_PWM 2
+#define RIGHT_BACKWARD_PWM 3
+#define RIGHT_FORWARD_EN 4
+#define RIGHT_BACKWARD_EN 5
+#define LEFT_FORWARD_PWM 6
+#define LEFT_BACKWARD_PWM 7
+#define LEFT_FORWARD_EN 8
+#define LEFT_BACKWARD_EN 9
 
 // Gantry position and limits
 const float IN_PER_STEP = 0.025; // Estimated distance per step
@@ -65,10 +69,20 @@ bool gantryHomed = false;
 #define AWAIT_NEXT_CMD_MS 100
 
 // Current move commands
-float gantryStepDelayMs = 0; // Delay between steps in milliseconds (0 = stopped, positive = forward, negative = reverse)
 int rightTankDriveSpeed = 0;
 int leftTankDriveSpeed = 0;
+float gantryStepDelayMs = 0; // Delay between steps in milliseconds (0 = stopped, positive = forward, negative = reverse)
+int hoeUpDownSpeed = 0;
 
+// Mode state
+#define MODE_AUTO 0
+#define MODE_MANUAL 1
+#define MODE_STOP 2
+byte controlMode = MODE_MANUAL;
+
+// Pulse accounting
+unsigned long lastPulseTime = 0;
+const unsigned long PULSE_TIMEOUT_MS = 3000;
 
 bool isGantryAtLimit(float nextPos)
 {
@@ -172,38 +186,43 @@ void maybeMoveGantry()
     }
 }
 
+void maybeMoveHoeUpDown()
+{
+    // TODO: I think Bryn wanted to take a crack at this
+}
+
 void maybeMoveTankDrive()
 {
     if (rightTankDriveSpeed > 0)
     {
-        analogWrite(RIGHT_FORWARD, rightTankDriveSpeed);
-        analogWrite(RIGHT_BACKWARD, 0);
+        analogWrite(RIGHT_FORWARD_PWM, rightTankDriveSpeed);
+        analogWrite(RIGHT_BACKWARD_PWM, 0);
     }
     else if (rightTankDriveSpeed < 0)
     {
-        analogWrite(RIGHT_FORWARD, 0);
-        analogWrite(RIGHT_BACKWARD, -rightTankDriveSpeed);
+        analogWrite(RIGHT_FORWARD_PWM, 0);
+        analogWrite(RIGHT_BACKWARD_PWM, -rightTankDriveSpeed);
     }
     else
     {
-        analogWrite(RIGHT_FORWARD, 0);
-        analogWrite(RIGHT_BACKWARD, 0);
+        analogWrite(RIGHT_FORWARD_PWM, 0);
+        analogWrite(RIGHT_BACKWARD_PWM, 0);
     }
 
     if (leftTankDriveSpeed > 0)
     {
-        analogWrite(LEFT_FORWARD, leftTankDriveSpeed);
-        analogWrite(LEFT_BACKWARD, 0);
+        analogWrite(LEFT_FORWARD_PWM, leftTankDriveSpeed);
+        analogWrite(LEFT_BACKWARD_PWM, 0);
     }
     else if (leftTankDriveSpeed < 0)
     {
-        analogWrite(LEFT_FORWARD, 0);
-        analogWrite(LEFT_BACKWARD, -leftTankDriveSpeed);
+        analogWrite(LEFT_FORWARD_PWM, 0);
+        analogWrite(LEFT_BACKWARD_PWM, -leftTankDriveSpeed);
     }
     else
     {
-        analogWrite(LEFT_FORWARD, 0);
-        analogWrite(LEFT_BACKWARD, 0);
+        analogWrite(LEFT_FORWARD_PWM, 0);
+        analogWrite(LEFT_BACKWARD_PWM, 0);
     }
 
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
@@ -226,15 +245,25 @@ void initializeGantry()
 
 void initializeTankDrive()
 {
-    pinMode(RIGHT_FORWARD, OUTPUT);
-    pinMode(RIGHT_BACKWARD, OUTPUT);
-    pinMode(LEFT_FORWARD, OUTPUT);
-    pinMode(LEFT_BACKWARD, OUTPUT);
+    pinMode(RIGHT_FORWARD_PWM, OUTPUT);
+    pinMode(RIGHT_BACKWARD_PWM, OUTPUT);
+    pinMode(LEFT_FORWARD_PWM, OUTPUT);
+    pinMode(LEFT_BACKWARD_PWM, OUTPUT);
 
-    digitalWrite(RIGHT_FORWARD, LOW);
-    digitalWrite(RIGHT_BACKWARD, LOW);
-    digitalWrite(LEFT_FORWARD, LOW);
-    digitalWrite(LEFT_BACKWARD, LOW);
+    pinMode(RIGHT_FORWARD_EN, OUTPUT);
+    pinMode(RIGHT_BACKWARD_EN, OUTPUT);
+    pinMode(LEFT_FORWARD_EN, OUTPUT);
+    pinMode(LEFT_BACKWARD_EN, OUTPUT);
+
+    digitalWrite(RIGHT_FORWARD_PWM, LOW);
+    digitalWrite(RIGHT_BACKWARD_PWM, LOW);
+    digitalWrite(LEFT_FORWARD_PWM, LOW);
+    digitalWrite(LEFT_BACKWARD_PWM, LOW);
+
+    digitalWrite(RIGHT_FORWARD_EN, HIGH);
+    digitalWrite(RIGHT_BACKWARD_EN, HIGH);
+    digitalWrite(LEFT_FORWARD_EN, HIGH);
+    digitalWrite(LEFT_BACKWARD_EN, HIGH);
 }
 
 void setup()
@@ -247,47 +276,136 @@ void setup()
     // These tasks will infinitely reschedule themselves until the program is terminated
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
+    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoeUpDown);
 }
 
 // Command types:
-// tank <leftSpeed> <rightSpeed>
-// gantry <delayMs>
-// Note: Commands are first interpretted generically as <token1> <token2> <token3>
-void maybeInterpretCmd()
+// drive <leftSpeed> <rightSpeed>
+// hoe <gantryStepDelayMs> <upDownSpeed>
+// mode <number> (0 = auto, 1 = manual, 2 = stop)
+// pulse (robot expects a pulse command every 1 second)
+
+// Note: Commands are initially interpretted generically as <token1> <token2> <token3>
+void interpretCmd(String cmd)
 {
+    String tokens[3];
+    int charIdx = 0;
+    int tokenIdx = 0;
+    while (charIdx < cmd.length())
+    {
+        if (cmd[charIdx] == ' ')
+        {
+            tokenIdx++;
+        }
+        else
+        {
+            tokens[tokenIdx] += cmd[charIdx];
+        }
+        charIdx++;
+    }
+
+    if (tokens[0] == "drive")
+    {
+        rightTankDriveSpeed = tokens[1].toInt();
+        leftTankDriveSpeed = tokens[2].toInt();
+    }
+    else if (tokens[0] == "hoe")
+    {
+        gantryStepDelayMs = tokens[1].toInt();
+        hoeUpDownSpeed = tokens[2].toInt();
+    }
+    else if (tokens[0] == "mode")
+    {
+        handleModeChange(tokens[1].toInt());
+    }
+    else if (tokens[0] == "pulse")
+    {
+        lastPulseTime = millis();
+    }
+    else
+    {
+        Serial.println("Error: Unrecognized command.");
+    }
+}
+
+void maybeCheckForRaspiCmd()
+{
+    if (controlMode != MODE_AUTO)
+    {
+        return;
+    }
     if (Serial.available() > 0)
     {
-        String cmd = Serial.readStringUntil('\n');
-        String tokens[3];
-        int charIdx = 0;
-        int tokenIdx = 0;
-        while (charIdx < cmd.length())
-        {
-            if (cmd[charIdx] == ' ')
-            {
-                tokenIdx++;
-            }
-            else
-            {
-                tokens[tokenIdx] += cmd[charIdx];
-            }
-            charIdx++;
-        }
-
-        if (tokens[0] == "tank")
-        {
-            rightTankDriveSpeed = tokens[1].toInt();
-            leftTankDriveSpeed = tokens[2].toInt();
-        }
-        else if (tokens[0] == "gantry")
-        {
-            gantryStepDelayMs = tokens[1].toInt();
-        }
+        interpretCmd(Serial.readStringUntil('\n'));
     }
+}
+
+void checkForRcCmd()
+{
+    // TODO: Listen for RC commands
+}
+
+void handleModeChange(byte newMode)
+{
+    controlMode = newMode;
+    if (newMode == MODE_AUTO || newMode == MODE_MANUAL)
+    {
+        handleResume();
+    }
+    else if (newMode == MODE_STOP)
+    {
+        handleStop();
+    }
+    else
+    {
+        controlMode = MODE_STOP;
+        handleStop();
+        Serial.println("Error: Invalid mode.");
+    }
+}
+
+void checkForPulse()
+{
+    if (millis() - lastPulseTime > PULSE_TIMEOUT_MS)
+    {
+        controlMode = MODE_STOP;
+        Serial.println("Error: Pulse not received.");
+        handleStop();
+    }
+    // Note: If no pulses are received, the robot will stop moving
+    // and the user will need to send a mode change command to resume
+}
+
+void handleStop()
+{
+    rightTankDriveSpeed = 0;
+    leftTankDriveSpeed = 0;
+    gantryStepDelayMs = 0;
+
+    digitalWrite(GANTRY_EN, HIGH);
+    digitalWrite(RIGHT_FORWARD_EN, LOW);
+    digitalWrite(RIGHT_BACKWARD_EN, LOW);
+    digitalWrite(LEFT_FORWARD_EN, LOW);
+    digitalWrite(LEFT_BACKWARD_EN, LOW);
+
+    Serial.println("Robot stopped.");
+}
+
+void handleResume()
+{
+    digitalWrite(GANTRY_EN, LOW);
+    digitalWrite(RIGHT_FORWARD_EN, HIGH);
+    digitalWrite(RIGHT_BACKWARD_EN, HIGH);
+    digitalWrite(LEFT_FORWARD_EN, HIGH);
+    digitalWrite(LEFT_BACKWARD_EN, HIGH);
+
+    Serial.println("Robot resumed.");
 }
 
 void loop()
 {
-    maybeInterpretCmd();
+    checkForRcCmd();
+    maybeCheckForRaspiCmd();
+    checkForPulse();
     runAllReadyTasks();
 }
