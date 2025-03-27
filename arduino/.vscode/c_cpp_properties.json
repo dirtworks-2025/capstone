@@ -15,6 +15,7 @@
                 "C:/Users/Luke/.platformio/packages/framework-arduino-avr/libraries/SPI/src",
                 "C:/Users/Luke/.platformio/packages/framework-arduino-avr/libraries/SoftwareSerial/src",
                 "C:/Users/Luke/.platformio/packages/framework-arduino-avr/libraries/Wire/src",
+                "C:/Users/Luke/Documents/Arduino/libraries/RF24",
                 ""
             ],
             "browse": {
