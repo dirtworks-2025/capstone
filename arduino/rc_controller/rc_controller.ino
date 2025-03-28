@@ -22,7 +22,7 @@
 byte controlMode = MODE_MANUAL;
 
 // Delays
-#define MAX_DELAY_BETWEEN_CMDS_MS 1000 // Maximum delay between two consecutive commands
+#define MAX_DELAY_BETWEEN_CMDS_MS 250 // Maximum delay between two consecutive commands
 
 // Speed limits
 #define TANK_DRIVE_SPEED_LIMIT 0.6 // Speed limit for the drive joystick (0.0 to 1.0)
@@ -98,13 +98,13 @@ void sendHoeCmd()
     if (abs(xNormalized) > abs(yNormalized))
     {
         int stepDelay_uS = map(abs(xNormalized), 0, 100, SLOW_STEP_DELAY_uS, FAST_STEP_DELAY_uS);
-        int gantryStepDelay_uS= xNormalized > 0 ? stepDelay_uS : -stepDelay_uS;
+        int gantryStepDelay_uS= xNormalized > 0 ? -stepDelay_uS : stepDelay_uS;
         sendCmd("hoe " + String(gantryStepDelay_uS) + " 0");
     }
     else
     {
         int upDownSpeed = map(abs(yNormalized), 0, 100, 0, 255);
-        int upDownDir = yNormalized > 0 ? 1 : -1;
+        int upDownDir = yNormalized > 0 ? -1 : 1;
         sendCmd("hoe 0 " + String(upDownSpeed * upDownDir));
     }
 }
@@ -130,6 +130,7 @@ void maybeUpdateControlMode()
 
 void sendCmd(String cmd)
 {
+    // Serial.println("Sending command: " + cmd);
     radio.write(cmd.c_str(), cmd.length() + 1);
 }
 
@@ -184,11 +185,11 @@ void loop()
     else if (controlMode == MODE_MANUAL)
     {
         sendCmd("mode 1");
-        delay(30);
+        delay(10);
         sendDriveCmd();
-        delay(30);
+        delay(10);
         sendHoeCmd();
-        delay(40);
+        delay(10);
     }
     else if (controlMode == MODE_STOP)
     {

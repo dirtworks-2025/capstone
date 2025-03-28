@@ -47,18 +47,19 @@ void runAllReadyTasks()
 #define GANTRY_EN 22
 #define GANTRY_DIR 23
 #define GANTRY_STP 24
-#define LIMIT_SWITCH_1 28
-#define LIMIT_SWITCH_2 29
+#define LIMIT_SWITCH_1 47
+#define LIMIT_SWITCH_2 46
 
 // Tank drive control pins
-#define RIGHT_FORWARD_PWM 2
-#define RIGHT_BACKWARD_PWM 3
-#define RIGHT_FORWARD_EN 4
-#define RIGHT_BACKWARD_EN 5
-#define LEFT_FORWARD_PWM 6
-#define LEFT_BACKWARD_PWM 7
-#define LEFT_FORWARD_EN 8
-#define LEFT_BACKWARD_EN 9
+// Semantics of RIGHT and LEFT might not be correct, but this correctly interprets RC commands
+#define RIGHT_FORWARD_PWM    3
+#define RIGHT_BACKWARD_PWM   2
+#define RIGHT_FORWARD_EN     4
+#define RIGHT_BACKWARD_EN    5
+#define LEFT_FORWARD_PWM     6
+#define LEFT_BACKWARD_PWM    7 
+#define LEFT_FORWARD_EN      8
+#define LEFT_BACKWARD_EN     9
 
 // Gantry position and limits
 const float IN_PER_STEP = 0.025; // Estimated distance per step
@@ -85,11 +86,11 @@ byte controlMode = MODE_MANUAL;
 
 // Verifying in range of RC controller
 unsigned long lastCmdReceived = 0;
-const unsigned long CMD_TIMEOUT_MS = 3000; // must receive a command every 3 seconds
+const unsigned long CMD_TIMEOUT_MS = 1000; // must receive a command within this interval
 
 // Radio
-#define CE_PIN 7
-#define CSN_PIN 8
+#define CE_PIN 30
+#define CSN_PIN 31
 RF24 radio(CE_PIN, CSN_PIN);
 const byte address[6] = "00001";
 
@@ -150,6 +151,7 @@ void stepForwardUntilNoLimitSwitch() {
         insertTask(HOMING_STEP_DELAY_MS, stepForwardUntilNoLimitSwitch);
     } else {
         currentPos = 0;
+        Serial.println("Hit first limit switch.");
 
         insertTask(HOMING_STEP_DELAY_MS, stepForwardUntilLimitSwitch);
     }
@@ -281,6 +283,7 @@ void initializeRadio()
     radio.openReadingPipe(0, address);
     radio.setPALevel(RF24_PA_MIN);
     radio.startListening();
+    Serial.println("Radio initialized.");
 }
 
 void setup()
@@ -289,6 +292,7 @@ void setup()
     delay(500);
     initializeGantry();
     initializeTankDrive();
+    initializeRadio();
     // Schedule the first move tasks
     // These tasks will infinitely reschedule themselves until the program is terminated
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
@@ -359,23 +363,37 @@ void checkForRcCmd()
         char text[32] = "";
         radio.read(&text, sizeof(text));
         lastCmdReceived = millis();
+        // Serial.print("Received command: " + String(text) + "\n");
         interpretCmd(String(text));
     }
     else if (millis() - lastCmdReceived > CMD_TIMEOUT_MS)
     {
-        // If no command has been received for 3 seconds, stop the robot
+        // If no command has been received for the timeout interval, stop the robot
         // and set the control mode to STOP
         // The robot will resume when it begins receiving commands again
-        controlMode = MODE_STOP;
-        Serial.println("Error: No command received for over 3 seconds.");
-        handleStop();
+        if (controlMode != MODE_STOP)
+        {
+            Serial.println("No command received for over " + String(CMD_TIMEOUT_MS) + " ms.");
+            controlMode = MODE_STOP;
+            handleStop();
+        }
     }
 }
 
 void handleModeChange(byte newMode)
 {
+    if (newMode == controlMode)
+    {
+        return; // No change in mode
+    }
     controlMode = newMode;
-    if (newMode == MODE_AUTO || newMode == MODE_MANUAL)
+    Serial.println("Control mode changed to " + String(newMode));
+    if (newMode == MODE_AUTO)
+    {
+
+        handleResume();
+    }
+    else if (newMode == MODE_MANUAL)
     {
         handleResume();
     }
@@ -396,6 +414,7 @@ void handleStop()
     rightTankDriveSpeed = 0;
     leftTankDriveSpeed = 0;
     gantryStepDelayMs = 0;
+    hoeUpDownSpeed = 0;
 
     digitalWrite(GANTRY_EN, HIGH);
     digitalWrite(RIGHT_FORWARD_EN, LOW);
@@ -408,6 +427,11 @@ void handleStop()
 
 void handleResume()
 {
+    rightTankDriveSpeed = 0;
+    leftTankDriveSpeed = 0;
+    gantryStepDelayMs = 0;
+    hoeUpDownSpeed = 0;
+
     digitalWrite(GANTRY_EN, LOW);
     digitalWrite(RIGHT_FORWARD_EN, HIGH);
     digitalWrite(RIGHT_BACKWARD_EN, HIGH);
