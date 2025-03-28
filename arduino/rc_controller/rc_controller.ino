@@ -12,7 +12,7 @@
 // Button pins
 #define STOP_BUTTON 2
 #define MODE_BUTTON 3
-#define BUTTON_3 4
+#define DISABLE_VECTORING_BUTTON 4
 #define BUTTON_4 5
 
 // Mode state
@@ -28,6 +28,9 @@ byte controlMode = MODE_MANUAL;
 #define TANK_DRIVE_SPEED_LIMIT 0.6 // Speed limit for the drive joystick (0.0 to 1.0)
 #define SLOW_STEP_DELAY_uS 10000
 #define FAST_STEP_DELAY_uS 3000
+
+// Deadzone
+#define DEADZONE_THRESHOLD 0.05 // Deadzone threshold for the joysticks (0.0 to 1.0)
 
 // Radio
 #define CE_PIN 7
@@ -48,11 +51,11 @@ void sendDriveCmd()
     float yNormalized = -map(y, 0, 1023, -100, 100) / 100.0;
 
     // Set deadzone per axis
-    if (abs(xNormalized) < 0.1)
+    if (abs(xNormalized) < DEADZONE_THRESHOLD)
     {
         xNormalized = 0.0;
     }
-    if (abs(yNormalized) < 0.1)
+    if (abs(yNormalized) < DEADZONE_THRESHOLD)
     {
         yNormalized = 0.0;
     }
@@ -67,7 +70,26 @@ void sendDriveCmd()
     // Set tank drive speeds
     int rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * TANK_DRIVE_SPEED_LIMIT;
     int leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * TANK_DRIVE_SPEED_LIMIT;
+
+    if (digitalRead(DISABLE_VECTORING_BUTTON) == HIGH)
+    {
+        sendDriveCmdWithNoVectoring(leftTankDriveSpeed, rightTankDriveSpeed);
+        return;
+    }
+
     sendCmd("drive " + String(leftTankDriveSpeed) + " " + String(rightTankDriveSpeed));
+}
+
+void sendDriveCmdWithNoVectoring(int leftTankDriveSpeed, int rightTankDriveSpeed)
+{
+    // Set deadzone that only allows for nearly equal speeds
+    if (abs(leftTankDriveSpeed - rightTankDriveSpeed) > 20)
+    {
+        sendCmd("drive 0 0");
+        return;
+    }
+    int speedToSend = (leftTankDriveSpeed + rightTankDriveSpeed) / 2;
+    sendCmd("drive " + String(speedToSend) + " " + String(speedToSend));
 }
 
 void sendHoeCmd()
@@ -78,11 +100,11 @@ void sendHoeCmd()
     int yNormalized = map(y, 0, 1023, -100, 100);
 
     // Set deadzone
-    if (abs(xNormalized) < 10)
+    if (abs(xNormalized) < 100 * DEADZONE_THRESHOLD)
     {
         xNormalized = 0;
     }
-    if (abs(yNormalized) < 10)
+    if (abs(yNormalized) < 100 * DEADZONE_THRESHOLD)
     {
         yNormalized = 0;
     }
@@ -130,7 +152,7 @@ void maybeUpdateControlMode()
 
 void sendCmd(String cmd)
 {
-    // Serial.println("Sending command: " + cmd);
+    Serial.println("Sending command: " + cmd);
     radio.write(cmd.c_str(), cmd.length() + 1);
 }
 
@@ -146,7 +168,7 @@ void initializeButtons()
 {
     pinMode(MODE_BUTTON, INPUT);
     pinMode(STOP_BUTTON, INPUT);
-    pinMode(BUTTON_3, INPUT);
+    pinMode(DISABLE_VECTORING_BUTTON, INPUT);
     pinMode(BUTTON_4, INPUT);
 }
 
@@ -180,7 +202,7 @@ void loop()
     if (controlMode == MODE_AUTO)
     {
         sendCmd("mode 0");
-        delay(1000);
+        delay(MAX_DELAY_BETWEEN_CMDS_MS);
     }
     else if (controlMode == MODE_MANUAL)
     {
@@ -194,7 +216,7 @@ void loop()
     else if (controlMode == MODE_STOP)
     {
         sendCmd("mode 2");
-        delay(1000);
+        delay(MAX_DELAY_BETWEEN_CMDS_MS);
     } else {
         Serial.println("Error: Unrecognized control mode.");
     }
