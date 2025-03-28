@@ -21,9 +21,13 @@
 #define MODE_STOP 2
 byte controlMode = MODE_MANUAL;
 
-// Pulses
-unsigned long lastPulseTime = 0;
-const unsigned long PULSE_DELAY = 1000;
+// Delays
+#define MAX_DELAY_BETWEEN_CMDS_MS 1000 // Maximum delay between two consecutive commands
+
+// Speed limits
+#define TANK_DRIVE_SPEED_LIMIT 0.6 // Speed limit for the drive joystick (0.0 to 1.0)
+#define SLOW_STEP_DELAY_uS 10000
+#define FAST_STEP_DELAY_uS 3000
 
 // Radio
 #define CE_PIN 7
@@ -33,16 +37,15 @@ RF24 radio(CE_PIN, CSN_PIN);
 
 // Command types:
 // drive <leftSpeed> <rightSpeed>
-// hoe <gantryStepDelayMs> <upDownSpeed>
+// hoe <gantryStepDelay_uS> <upDownSpeed>
 // mode <number> (0 = auto, 1 = manual, 2 = stop)
-// pulse (robot expects a pulse command every 1 second)
 
 void sendDriveCmd()
 {
     int x = analogRead(DRIVE_JOYSTICK_X);
     int y = analogRead(DRIVE_JOYSTICK_Y);
     float xNormalized = map(x, 0, 1023, -100, 100) / 100.0;
-    float yNormalized = map(y, 0, 1023, -100, 100) / -100.0;
+    float yNormalized = -map(y, 0, 1023, -100, 100) / 100.0;
 
     // Set deadzone per axis
     if (abs(xNormalized) < 0.1)
@@ -62,9 +65,8 @@ void sendDriveCmd()
     }
 
     // Set tank drive speeds
-    float speedLimit = 0.6;
-    int rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * speedLimit;
-    int leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * speedLimit;
+    int rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * TANK_DRIVE_SPEED_LIMIT;
+    int leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * TANK_DRIVE_SPEED_LIMIT;
     sendCmd("drive " + String(leftTankDriveSpeed) + " " + String(rightTankDriveSpeed));
 }
 
@@ -95,9 +97,9 @@ void sendHoeCmd()
     // Only listen to the signal with the greatest magnitude
     if (abs(xNormalized) > abs(yNormalized))
     {
-        int stepDelay = map(abs(xNormalized), 0, 100, 5000, 1500);
-        int gantryStepDelayMs = xNormalized > 0 ? stepDelay : -stepDelay;
-        sendCmd("hoe " + String(gantryStepDelayMs) + " 0");
+        int stepDelay_uS = map(abs(xNormalized), 0, 100, SLOW_STEP_DELAY_uS, FAST_STEP_DELAY_uS);
+        int gantryStepDelay_uS= xNormalized > 0 ? stepDelay_uS : -stepDelay_uS;
+        sendCmd("hoe " + String(gantryStepDelay_uS) + " 0");
     }
     else
     {
@@ -107,37 +109,22 @@ void sendHoeCmd()
     }
 }
 
-void maybeChangeMode() 
+void maybeUpdateControlMode() 
 {
     bool isAutoMode = digitalRead(MODE_BUTTON) == HIGH;
     bool isStopMode = digitalRead(STOP_BUTTON) == HIGH;
 
-    byte newMode = MODE_MANUAL;
     if (isStopMode)
     {
-        newMode = MODE_STOP;
+        controlMode = MODE_STOP;
     }
     else if (isAutoMode)
     {
-        newMode = MODE_AUTO;
+        controlMode = MODE_AUTO;
     }
     else
     {
-        newMode = MODE_MANUAL;
-    }
-    if (newMode != controlMode)
-    {
-        controlMode = newMode;
-        sendCmd("mode " + String(controlMode));
-    }
-}
-
-void maybeSendPulse()
-{
-    if (millis() - lastPulseTime > PULSE_DELAY)
-    {
-        sendCmd("pulse");
-        lastPulseTime = millis();
+        controlMode = MODE_MANUAL;
     }
 }
 
@@ -172,7 +159,7 @@ void initializeRadio()
 
 void setup()
 {
-    Serial.begin(9600);
+    Serial.begin(115200);
     delay(500);
     initializeRadio();
     initializeJoysticks();
@@ -181,19 +168,33 @@ void setup()
 
 void loop()
 {
-    maybeChangeMode();
-    maybeSendPulse();
-    if (controlMode == MODE_MANUAL)
+    maybeUpdateControlMode();
+    delayMicroseconds(100);
+
+    // Send at least one command per second as a "pulse"
+    // The robot will stop if no commands are received for 3 seconds
+    // Basically, the controller "reminds" the robot the mode it's in,
+    // if it doesn't have anything else to say
+
+    if (controlMode == MODE_AUTO)
     {
+        sendCmd("mode 0");
+        delay(1000);
+    }
+    else if (controlMode == MODE_MANUAL)
+    {
+        sendCmd("mode 1");
+        delay(40);
         sendDriveCmd();
+        delay(30);
         sendHoeCmd();
-        delay(100);
+        delay(30);
     }
     else if (controlMode == MODE_STOP)
     {
         sendCmd("mode 2");
         delay(1000);
     } else {
-        delay(1000);
+        Serial.println("Error: Unrecognized control mode.");
     }
 }
