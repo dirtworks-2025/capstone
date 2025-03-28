@@ -1,6 +1,9 @@
 #include <Arduino.h>
+#include <SPI.h>
+#include <nRF24L01.h>
+#include <RF24.h>
 
-#define MAX_TASKS 16
+#define MAX_TASKS 8 // Maximum number of tasks that can be scheduled
 
 struct Task
 {
@@ -60,15 +63,15 @@ void runAllReadyTasks()
 // Gantry position and limits
 const float IN_PER_STEP = 0.025; // Estimated distance per step
 float currentPos = 0; // Inches
-float minPos = 0;     // Inches
-float maxPos = 0;     // Inches
+float minPos = 0;     // Inches - Soft limit - Will be set to 2 inches from lower limit switch after homing
+float maxPos = 0;     // Inches - Soft limit - Will be set to 2 inches from upper limit switch after homing
 bool gantryHomed = false;
 
 // Standard delays
 #define HOMING_STEP_DELAY_MS 10
 #define AWAIT_NEXT_CMD_MS 100
 
-// Current move commands
+// Current move commands (these will be set by the command interpreter, then eexecuted in the task queue)
 int rightTankDriveSpeed = 0;
 int leftTankDriveSpeed = 0;
 float gantryStepDelayMs = 0; // Delay between steps in milliseconds (0 = stopped, positive = forward, negative = reverse)
@@ -80,9 +83,15 @@ int hoeUpDownSpeed = 0;
 #define MODE_STOP 2
 byte controlMode = MODE_MANUAL;
 
-// Pulse accounting
-unsigned long lastPulseTime = 0;
-const unsigned long PULSE_TIMEOUT_MS = 3000;
+// Verifying in range of RC controller
+unsigned long lastCmdReceived = 0;
+const unsigned long CMD_TIMEOUT_MS = 3000; // must receive a command every 3 seconds
+
+// Radio
+#define CE_PIN 7
+#define CSN_PIN 8
+RF24 radio(CE_PIN, CSN_PIN);
+const byte address[6] = "00001";
 
 bool isGantryAtLimit(float nextPos)
 {
@@ -266,9 +275,17 @@ void initializeTankDrive()
     digitalWrite(LEFT_BACKWARD_EN, HIGH);
 }
 
+void initializeRadio() 
+{
+    radio.begin();
+    radio.openReadingPipe(0, address);
+    radio.setPALevel(RF24_PA_MIN);
+    radio.startListening();
+}
+
 void setup()
 {
-    Serial.begin(9600);
+    Serial.begin(115200);
     delay(500);
     initializeGantry();
     initializeTankDrive();
@@ -281,9 +298,8 @@ void setup()
 
 // Command types:
 // drive <leftSpeed> <rightSpeed>
-// hoe <gantryStepDelayMs> <upDownSpeed>
+// hoe <gantryStepDelay_uS> <upDownSpeed>
 // mode <number> (0 = auto, 1 = manual, 2 = stop)
-// pulse (robot expects a pulse command every 1 second)
 
 // Note: Commands are initially interpretted generically as <token1> <token2> <token3>
 void interpretCmd(String cmd)
@@ -311,16 +327,12 @@ void interpretCmd(String cmd)
     }
     else if (tokens[0] == "hoe")
     {
-        gantryStepDelayMs = tokens[1].toInt();
+        gantryStepDelayMs = tokens[1].toInt() / 1000; // Convert microseconds to milliseconds
         hoeUpDownSpeed = tokens[2].toInt();
     }
     else if (tokens[0] == "mode")
     {
         handleModeChange(tokens[1].toInt());
-    }
-    else if (tokens[0] == "pulse")
-    {
-        lastPulseTime = millis();
     }
     else
     {
@@ -342,7 +354,22 @@ void maybeCheckForRaspiCmd()
 
 void checkForRcCmd()
 {
-    // TODO: Listen for RC commands
+    if (radio.available())
+    {
+        char text[32] = "";
+        radio.read(&text, sizeof(text));
+        lastCmdReceived = millis();
+        interpretCmd(String(text));
+    }
+    else if (millis() - lastCmdReceived > CMD_TIMEOUT_MS)
+    {
+        // If no command has been received for 3 seconds, stop the robot
+        // and set the control mode to STOP
+        // The robot will resume when it begins receiving commands again
+        controlMode = MODE_STOP;
+        Serial.println("Error: No command received for over 3 seconds.");
+        handleStop();
+    }
 }
 
 void handleModeChange(byte newMode)
@@ -362,18 +389,6 @@ void handleModeChange(byte newMode)
         handleStop();
         Serial.println("Error: Invalid mode.");
     }
-}
-
-void checkForPulse()
-{
-    if (millis() - lastPulseTime > PULSE_TIMEOUT_MS)
-    {
-        controlMode = MODE_STOP;
-        Serial.println("Error: Pulse not received.");
-        handleStop();
-    }
-    // Note: If no pulses are received, the robot will stop moving
-    // and the user will need to send a mode change command to resume
 }
 
 void handleStop()
@@ -406,6 +421,5 @@ void loop()
 {
     checkForRcCmd();
     maybeCheckForRaspiCmd();
-    checkForPulse();
     runAllReadyTasks();
 }
