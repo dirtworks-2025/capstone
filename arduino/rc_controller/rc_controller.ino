@@ -1,4 +1,7 @@
 #include <Arduino.h>
+#include <SPI.h>
+#include <nRF24L01.h>
+#include <RF24.h>
 
 // Joystick pins
 #define HOE_JOYSTICK_Y A0
@@ -7,8 +10,10 @@
 #define DRIVE_JOYSTICK_X A3
 
 // Button pins
-#define MODE_SWITCH 2
-#define STOP_BUTTON 3
+#define STOP_BUTTON 2
+#define MODE_BUTTON 3
+#define BUTTON_3 4
+#define BUTTON_4 5
 
 // Mode state
 #define MODE_AUTO 0
@@ -19,6 +24,12 @@ byte controlMode = MODE_MANUAL;
 // Pulses
 unsigned long lastPulseTime = 0;
 const unsigned long PULSE_DELAY = 1000;
+
+// Radio
+#define CE_PIN 7
+#define CSN_PIN 8
+const byte address[6] = "00001";
+RF24 radio(CE_PIN, CSN_PIN);
 
 // Command types:
 // drive <leftSpeed> <rightSpeed>
@@ -31,7 +42,7 @@ void sendDriveCmd()
     int x = analogRead(DRIVE_JOYSTICK_X);
     int y = analogRead(DRIVE_JOYSTICK_Y);
     float xNormalized = map(x, 0, 1023, -100, 100) / 100.0;
-    float yNormalized = map(y, 0, 1023, -100, 100) / 100.0;
+    float yNormalized = map(y, 0, 1023, -100, 100) / -100.0;
 
     // Set deadzone per axis
     if (abs(xNormalized) < 0.1)
@@ -98,22 +109,26 @@ void sendHoeCmd()
 
 void maybeChangeMode() 
 {
-    bool isManualMode = digitalRead(MODE_SWITCH) == LOW;
-    bool isStopMode = digitalRead(STOP_BUTTON) == LOW;
+    bool isAutoMode = digitalRead(MODE_BUTTON) == HIGH;
+    bool isStopMode = digitalRead(STOP_BUTTON) == HIGH;
+
+    byte newMode = MODE_MANUAL;
     if (isStopMode)
     {
-        controlMode = MODE_STOP;
-        sendCmd("mode 2");
+        newMode = MODE_STOP;
     }
-    else if (isManualMode)
+    else if (isAutoMode)
     {
-        controlMode = MODE_MANUAL;
-        sendCmd("mode 1");
+        newMode = MODE_AUTO;
     }
     else
     {
-        controlMode = MODE_AUTO;
-        sendCmd("mode 0");
+        newMode = MODE_MANUAL;
+    }
+    if (newMode != controlMode)
+    {
+        controlMode = newMode;
+        sendCmd("mode " + String(controlMode));
     }
 }
 
@@ -128,7 +143,7 @@ void maybeSendPulse()
 
 void sendCmd(String cmd)
 {
-    Serial.println(cmd);
+    radio.write(cmd.c_str(), cmd.length() + 1);
 }
 
 void initializeJoysticks()
@@ -141,14 +156,25 @@ void initializeJoysticks()
 
 void initializeButtons()
 {
-    pinMode(MODE_SWITCH, INPUT_PULLUP);
-    pinMode(STOP_BUTTON, INPUT_PULLUP);
+    pinMode(MODE_BUTTON, INPUT);
+    pinMode(STOP_BUTTON, INPUT);
+    pinMode(BUTTON_3, INPUT);
+    pinMode(BUTTON_4, INPUT);
+}
+
+void initializeRadio()
+{
+    radio.begin();
+    radio.openWritingPipe(address);
+    radio.setPALevel(RF24_PA_MIN);
+    radio.stopListening();
 }
 
 void setup()
 {
     Serial.begin(9600);
     delay(500);
+    initializeRadio();
     initializeJoysticks();
     initializeButtons();
 }
@@ -166,6 +192,8 @@ void loop()
     else if (controlMode == MODE_STOP)
     {
         sendCmd("mode 2");
+        delay(1000);
+    } else {
         delay(1000);
     }
 }
