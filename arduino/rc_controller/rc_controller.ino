@@ -10,10 +10,10 @@
 #define DRIVE_JOYSTICK_X A3
 
 // Button pins
-#define STOP_BUTTON 2
-#define MODE_BUTTON 3
-#define DISABLE_VECTORING_BUTTON 4
-#define BUTTON_4 5
+#define STOP_MODE_BUTTON 2
+#define AUTO_MODE_BUTTON 3
+#define STRAIGHT_MODE_BUTTON 4 // might change this button to binary raise/lower stirrup hoe
+#define FAST_MODE_BUTTON 5
 
 // Mode state
 #define MODE_AUTO 0
@@ -25,7 +25,8 @@ byte controlMode = MODE_MANUAL;
 #define MAX_DELAY_BETWEEN_CMDS_MS 250 // Maximum delay between two consecutive commands
 
 // Speed limits
-#define TANK_DRIVE_SPEED_LIMIT 0.6 // Speed limit for the drive joystick (0.0 to 1.0)
+#define TANK_DRIVE_SLOW_SPEED_LIMIT 0.5 // Speed limit for the drive joystick (0.0 to 1.0)
+#define TANK_DRIVE_FAST_SPEED_LIMIT 1.0 // Speed limit for the drive joystick (0.0 to 1.0)
 #define SLOW_STEP_DELAY_uS 10000
 #define FAST_STEP_DELAY_uS 3000
 
@@ -67,11 +68,18 @@ void sendDriveCmd()
         return;
     }
 
-    // Set tank drive speeds
-    int rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * TANK_DRIVE_SPEED_LIMIT;
-    int leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * TANK_DRIVE_SPEED_LIMIT;
+    // Handle fast mode vs slow mode
+    float speedLimit = TANK_DRIVE_SLOW_SPEED_LIMIT;
+    if (digitalRead(FAST_MODE_BUTTON) == HIGH)
+    {
+        speedLimit = TANK_DRIVE_FAST_SPEED_LIMIT;
+    }
 
-    if (digitalRead(DISABLE_VECTORING_BUTTON) == HIGH)
+    // Set tank drive speeds
+    int rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * speedLimit;
+    int leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * speedLimit;
+
+    if (digitalRead(STRAIGHT_MODE_BUTTON) == HIGH)
     {
         sendDriveCmdWithNoVectoring(leftTankDriveSpeed, rightTankDriveSpeed);
         return;
@@ -133,8 +141,8 @@ void sendHoeCmd()
 
 void maybeUpdateControlMode() 
 {
-    bool isAutoMode = digitalRead(MODE_BUTTON) == HIGH;
-    bool isStopMode = digitalRead(STOP_BUTTON) == HIGH;
+    bool isAutoMode = digitalRead(AUTO_MODE_BUTTON) == HIGH;
+    bool isStopMode = digitalRead(STOP_MODE_BUTTON) == HIGH;
 
     if (isStopMode)
     {
@@ -152,7 +160,7 @@ void maybeUpdateControlMode()
 
 void sendCmd(String cmd)
 {
-    Serial.println("Sending command: " + cmd);
+    // Serial.println("Sending command: " + cmd);
     radio.write(cmd.c_str(), cmd.length() + 1);
 }
 
@@ -166,10 +174,10 @@ void initializeJoysticks()
 
 void initializeButtons()
 {
-    pinMode(MODE_BUTTON, INPUT);
-    pinMode(STOP_BUTTON, INPUT);
-    pinMode(DISABLE_VECTORING_BUTTON, INPUT);
-    pinMode(BUTTON_4, INPUT);
+    pinMode(AUTO_MODE_BUTTON, INPUT);
+    pinMode(STOP_MODE_BUTTON, INPUT);
+    pinMode(STRAIGHT_MODE_BUTTON, INPUT);
+    pinMode(FAST_MODE_BUTTON, INPUT);
 }
 
 void initializeRadio()
