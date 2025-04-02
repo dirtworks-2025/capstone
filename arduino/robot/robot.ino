@@ -89,6 +89,8 @@ int hoeUpDownSpeed = 0;
 int currentRightTankDriveSpeed = 0;
 int currentLeftTankDriveSpeed = 0;
 
+#define TANK_DRIVE_ACCEL_STEP 10 // The max amount to increase / decrease the speed by while accelerating / decelerating
+
 // Mode state
 #define MODE_AUTO 0
 #define MODE_MANUAL 1
@@ -232,21 +234,24 @@ void maybeMoveHoeUpDown()
 void maybeMoveTankDrive()
 {
     // Smoothly accelerate / decelerate the tank drive speeds
+    int rightAccelStep = min(TANK_DRIVE_ACCEL_STEP, abs(cmdRightTankDriveSpeed - currentRightTankDriveSpeed));
+    int leftAccelStep = min(TANK_DRIVE_ACCEL_STEP, abs(cmdLeftTankDriveSpeed - currentLeftTankDriveSpeed));
+
     if (cmdRightTankDriveSpeed > currentRightTankDriveSpeed)
     {
-        currentRightTankDriveSpeed += 1;
+        currentRightTankDriveSpeed += rightAccelStep;
     }
     else if (cmdRightTankDriveSpeed < currentRightTankDriveSpeed)
     {
-        currentRightTankDriveSpeed -= 1;
+        currentRightTankDriveSpeed -= rightAccelStep;
     }
     if (cmdLeftTankDriveSpeed > currentLeftTankDriveSpeed)
     {
-        currentLeftTankDriveSpeed += 1;
+        currentLeftTankDriveSpeed += leftAccelStep;
     }
     else if (cmdLeftTankDriveSpeed < currentLeftTankDriveSpeed)
     {
-        currentLeftTankDriveSpeed -= 1;
+        currentLeftTankDriveSpeed -= leftAccelStep;
     }
 
     // Set the tank drive speeds to the current speeds
