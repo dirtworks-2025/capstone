@@ -77,12 +77,17 @@ bool gantryHomed = false;
 // Standard delays
 #define HOMING_STEP_DELAY_MS 10
 #define AWAIT_NEXT_CMD_MS 100
+#define TANK_DRIVE_ACCEL_DELAY_MS 10 // Delay between tank drive speed changes
 
 // Current move commands (these will be set by the command interpreter, then eexecuted in the task queue)
-int rightTankDriveSpeed = 0;
-int leftTankDriveSpeed = 0;
+int cmdRightTankDriveSpeed = 0;
+int cmdLeftTankDriveSpeed = 0;
 float gantryStepDelayMs = 0; // Delay between steps in milliseconds (0 = stopped, positive = forward, negative = reverse)
 int hoeUpDownSpeed = 0;
+
+// Current tank drive speeds (these will lag the commands slightly so the motors can accelerate / decelerate)
+int currentRightTankDriveSpeed = 0;
+int currentLeftTankDriveSpeed = 0;
 
 // Mode state
 #define MODE_AUTO 0
@@ -222,20 +227,38 @@ void maybeMoveHoeUpDown()
     }
 
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoeUpDown);
-    Serial.println("Hoe speed: " + String(hoeUpDownSpeed));
 }
 
 void maybeMoveTankDrive()
 {
-    if (rightTankDriveSpeed > 0)
+    // Smoothly accelerate / decelerate the tank drive speeds
+    if (cmdRightTankDriveSpeed > currentRightTankDriveSpeed)
     {
-        analogWrite(RIGHT_FORWARD_PWM, rightTankDriveSpeed);
+        currentRightTankDriveSpeed += 1;
+    }
+    else if (cmdRightTankDriveSpeed < currentRightTankDriveSpeed)
+    {
+        currentRightTankDriveSpeed -= 1;
+    }
+    if (cmdLeftTankDriveSpeed > currentLeftTankDriveSpeed)
+    {
+        currentLeftTankDriveSpeed += 1;
+    }
+    else if (cmdLeftTankDriveSpeed < currentLeftTankDriveSpeed)
+    {
+        currentLeftTankDriveSpeed -= 1;
+    }
+
+    // Set the tank drive speeds to the current speeds
+    if (currentRightTankDriveSpeed > 0)
+    {
+        analogWrite(RIGHT_FORWARD_PWM, currentRightTankDriveSpeed);
         analogWrite(RIGHT_BACKWARD_PWM, 0);
     }
-    else if (rightTankDriveSpeed < 0)
+    else if (currentRightTankDriveSpeed < 0)
     {
         analogWrite(RIGHT_FORWARD_PWM, 0);
-        analogWrite(RIGHT_BACKWARD_PWM, -rightTankDriveSpeed);
+        analogWrite(RIGHT_BACKWARD_PWM, -currentRightTankDriveSpeed);
     }
     else
     {
@@ -243,15 +266,15 @@ void maybeMoveTankDrive()
         analogWrite(RIGHT_BACKWARD_PWM, 0);
     }
 
-    if (leftTankDriveSpeed > 0)
+    if (currentLeftTankDriveSpeed > 0)
     {
-        analogWrite(LEFT_FORWARD_PWM, leftTankDriveSpeed);
+        analogWrite(LEFT_FORWARD_PWM, currentLeftTankDriveSpeed);
         analogWrite(LEFT_BACKWARD_PWM, 0);
     }
-    else if (leftTankDriveSpeed < 0)
+    else if (currentLeftTankDriveSpeed < 0)
     {
         analogWrite(LEFT_FORWARD_PWM, 0);
-        analogWrite(LEFT_BACKWARD_PWM, -leftTankDriveSpeed);
+        analogWrite(LEFT_BACKWARD_PWM, -currentLeftTankDriveSpeed);
     }
     else
     {
@@ -259,7 +282,7 @@ void maybeMoveTankDrive()
         analogWrite(LEFT_BACKWARD_PWM, 0);
     }
 
-    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
+    insertTask(TANK_DRIVE_ACCEL_DELAY_MS, maybeMoveTankDrive);
 }
 
 void initializeGantry()
@@ -364,8 +387,8 @@ void interpretCmd(String cmd)
 
     if (tokens[0] == "drive")
     {
-        rightTankDriveSpeed = tokens[1].toInt();
-        leftTankDriveSpeed = tokens[2].toInt();
+        cmdRightTankDriveSpeed = tokens[1].toInt();
+        cmdLeftTankDriveSpeed = tokens[2].toInt();
     }
     else if (tokens[0] == "hoe")
     {
@@ -449,32 +472,36 @@ void handleModeChange(byte newMode)
 
 void handleStop()
 {
-    rightTankDriveSpeed = 0;
-    leftTankDriveSpeed = 0;
-    gantryStepDelayMs = 0;
-    hoeUpDownSpeed = 0;
-
     digitalWrite(GANTRY_EN, HIGH);
     digitalWrite(RIGHT_FORWARD_EN, LOW);
     digitalWrite(RIGHT_BACKWARD_EN, LOW);
     digitalWrite(LEFT_FORWARD_EN, LOW);
     digitalWrite(LEFT_BACKWARD_EN, LOW);
 
+    cmdRightTankDriveSpeed = 0;
+    cmdLeftTankDriveSpeed = 0;
+    currentRightTankDriveSpeed = 0;
+    currentLeftTankDriveSpeed = 0;
+    gantryStepDelayMs = 0;
+    hoeUpDownSpeed = 0;
+
     Serial.println("Robot stopped.");
 }
 
 void handleResume()
 {
-    rightTankDriveSpeed = 0;
-    leftTankDriveSpeed = 0;
-    gantryStepDelayMs = 0;
-    hoeUpDownSpeed = 0;
-
     digitalWrite(GANTRY_EN, LOW);
     digitalWrite(RIGHT_FORWARD_EN, HIGH);
     digitalWrite(RIGHT_BACKWARD_EN, HIGH);
     digitalWrite(LEFT_FORWARD_EN, HIGH);
     digitalWrite(LEFT_BACKWARD_EN, HIGH);
+
+    cmdRightTankDriveSpeed = 0;
+    cmdLeftTankDriveSpeed = 0;
+    currentRightTankDriveSpeed = 0;
+    currentLeftTankDriveSpeed = 0;
+    gantryStepDelayMs = 0;
+    hoeUpDownSpeed = 0;
 
     Serial.println("Robot resumed.");
 }
