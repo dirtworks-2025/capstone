@@ -61,6 +61,12 @@ void runAllReadyTasks()
 #define LEFT_FORWARD_EN      8
 #define LEFT_BACKWARD_EN     9
 
+// Stirrup hoe forward / backward pins
+#define HOE_FORWARD_PWM 11
+#define HOE_BACKWARD_PWM 10
+#define HOE_FORWARD_EN 12
+#define HOE_BACKWARD_EN 13
+
 // Gantry position and limits
 const float IN_PER_STEP = 0.025; // Estimated distance per step
 float currentPos = 0; // Inches
@@ -199,7 +205,24 @@ void maybeMoveGantry()
 
 void maybeMoveHoeUpDown()
 {
-    // TODO: I think Bryn wanted to take a crack at this
+    if (hoeUpDownSpeed > 0)
+    {
+        analogWrite(HOE_FORWARD_PWM, hoeUpDownSpeed);
+        analogWrite(HOE_BACKWARD_PWM, 0);
+    }
+    else if (hoeUpDownSpeed < 0)
+    {
+        analogWrite(HOE_FORWARD_PWM, 0);
+        analogWrite(HOE_BACKWARD_PWM, -hoeUpDownSpeed);
+    }
+    else
+    {
+        analogWrite(HOE_FORWARD_PWM, 0);
+        analogWrite(HOE_BACKWARD_PWM, 0);
+    }
+
+    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoeUpDown);
+    Serial.println("Hoe speed: " + String(hoeUpDownSpeed));
 }
 
 void maybeMoveTankDrive()
@@ -277,6 +300,20 @@ void initializeTankDrive()
     digitalWrite(LEFT_BACKWARD_EN, HIGH);
 }
 
+void initializeHoe()
+{
+    pinMode(HOE_FORWARD_PWM, OUTPUT);
+    pinMode(HOE_BACKWARD_PWM, OUTPUT);
+    pinMode(HOE_FORWARD_EN, OUTPUT);
+    pinMode(HOE_BACKWARD_EN, OUTPUT);
+
+    digitalWrite(HOE_FORWARD_PWM, LOW);
+    digitalWrite(HOE_BACKWARD_PWM, LOW);
+
+    digitalWrite(HOE_FORWARD_EN, HIGH);
+    digitalWrite(HOE_BACKWARD_EN, HIGH);
+}
+
 void initializeRadio() 
 {
     radio.begin();
@@ -292,6 +329,7 @@ void setup()
     delay(500);
     initializeGantry();
     initializeTankDrive();
+    initializeHoe();
     initializeRadio();
     // Schedule the first move tasks
     // These tasks will infinitely reschedule themselves until the program is terminated
