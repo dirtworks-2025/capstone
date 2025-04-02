@@ -11,6 +11,8 @@ image_name = "younger_with_drip_tape.jpg"
 # image_name = "synthetic.png"
 image_path = os.path.join(base_dir, "inputs", image_name)
 image = cv2.imread(image_path)
+scale_factor = 0.5
+image = cv2.resize(image, (0, 0), fx=scale_factor, fy=scale_factor)
 
 hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 h_channel = hsv[:, :, 0]
@@ -19,16 +21,19 @@ v_channel = hsv[:, :, 2]
 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 blank = np.zeros_like(image, dtype=np.uint8)
 
-blurred = cv2.blur(s_channel, (10, 10))
+blurred = cv2.blur(s_channel, (3, 3))
 mask = cv2.inRange(blurred, 0, 50)
 
-roi = np.zeros_like(gray, dtype=np.uint8)
+roi_gray = np.zeros_like(gray, dtype=np.uint8)
+roi_colors = np.zeros_like(image, dtype=np.uint8)
 height, width = gray.shape
-roi[height // 2:, :] = 255
-roi = cv2.bitwise_and(mask, roi)
+roi_gray[height // 2:, :] = 255
+roi_colors[height // 2:, :] = 255, 255, 255
+
+mask = cv2.bitwise_and(mask, roi_gray)
 
 lines = cv2.HoughLinesP(
-    roi,
+    mask,
     rho=1,
     theta=np.pi / 180,
     threshold=100,
@@ -61,22 +66,24 @@ def line_to_feature(x1, y1, x2, y2):
 
     return rho, theta
 
-def feature_to_line(rho, theta):
-    # Point on the line (closest to origin)
-    x0 = rho * np.cos(theta)
-    y0 = rho * np.sin(theta)
+def feature_to_line(rho, theta, width, height):
+    # Point closest to the origin on the line
+    x_c = rho * np.cos(theta)
+    y_c = rho * np.sin(theta)
 
-    # Compute slope
-    sin_theta = np.sin(theta)
-    cos_theta = np.cos(theta)
+    # Direction vector along the line
+    dx = np.sin(theta)
+    dy = -np.cos(theta)
 
-    # Handle vertical line (theta = 0 or pi)
-    if abs(sin_theta) < 1e-10:
-        m = float('inf')  # or return None or special case
-    else:
-        m = -cos_theta / sin_theta
+    # Extend the line across the whole image
+    length = np.hypot(width, height)  # length to extend in each direction
 
-    return x0, y0, m
+    x0 = x_c + dx * length
+    y0 = y_c + dy * length
+    x1 = x_c - dx * length
+    y1 = y_c - dy * length
+
+    return x0, y0, x1, y1
 
 features = np.array([line_to_feature(*line[0]) for line in lines])
 dbscan = DBSCAN(eps=20, min_samples=5)
@@ -105,20 +112,12 @@ plt.title("Line Features (Rho vs Theta)")
 plt.grid(True)
 plt.show()
 
-# # Get representative lines for each cluster
-# representative_lines = []
-# for i in range(k):
-#     cluster_indices = np.where(labels == i)[0]
-#     if len(cluster_indices) > 0:
-#         cluster_features = features[cluster_indices]
-#         cluster_center = kmeans.cluster_centers_[i]
-#         representative_line = feature_to_line(cluster_center)
-#         representative_lines.append(representative_line)
-
-# # Draw representative lines
-# rep_lines_image = blank.copy()
-# for x1, y1, x2, y2 in lines:
-#     cv2.line(rep_lines_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+# Draw representative lines
+rep_lines_image = blank.copy()
+for rho, theta in centroids:
+    x0, y0, x1, y1 = feature_to_line(rho, theta, width, height)
+    cv2.line(rep_lines_image, (int(x0), int(y0)), (int(x1), int(y1)), (0, 255, 0), 2)
+rep_lines_image = cv2.bitwise_and(rep_lines_image, roi_colors)
 
 row1 = np.hstack((
     image, 
@@ -130,12 +129,12 @@ row1 = np.hstack((
 row2 = np.hstack((
     cv2.cvtColor(blurred, cv2.COLOR_GRAY2BGR),
     cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR),
-    cv2.cvtColor(roi, cv2.COLOR_GRAY2BGR),
     lines_image,
+    rep_lines_image,
 ))
 
 combined = np.vstack((row1, row2))
-scale_factor = 0.3
+scale_factor = 0.6
 combined = cv2.resize(combined, (0, 0), fx=scale_factor, fy=scale_factor)
 
 # Display the image with detected lines
