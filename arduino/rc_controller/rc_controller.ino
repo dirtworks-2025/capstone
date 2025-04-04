@@ -2,6 +2,17 @@
 #include <SPI.h>
 #include <nRF24L01.h>
 #include <RF24.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+// Screen Pins
+#define DISPLAY_SDA A4
+#define DISPLAY_SCL A5
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1  
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 // Joystick pins
 #define HOE_JOYSTICK_Y A0
@@ -188,6 +199,115 @@ void initializeRadio()
     radio.stopListening();
 }
 
+void initializeDisplay() {
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    while (true);
+  }
+  display.clearDisplay();
+  display.display();
+  delay(200);
+}
+
+void initializeDisplayLayout() {
+  display.clearDisplay();
+
+  // Top title
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.print("ROW-BOT");
+
+  // Status message box (top right)
+  display.drawRect(90, 0, 38, 16, SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(93, 4);
+  display.print("Status");
+
+  // Dashed line separating header
+  for (int i = 0; i < SCREEN_WIDTH; i += 4)
+    display.drawPixel(i, 17, SSD1306_WHITE);
+
+  // Arrow label
+  display.setCursor(0, 20);
+  display.print("Drive");
+
+  // Variable text box
+  display.drawRect(40, 22, 84, 40, SSD1306_WHITE); // large box
+  display.setCursor(45, 30);
+  display.setTextSize(1);
+  display.print("variable");
+
+  display.display();
+}
+
+void updateStatus(uint8_t mode, String txt, int angle) {
+  String statusText;
+  switch (mode) {
+    case 0: statusText = "AUTO"; break;
+    case 1:  statusText = "MAN";  break;
+    case 2: statusText = "STOP"; break;
+    default:        statusText = "???";  break;
+  }
+
+  display.fillRect(91, 1, 36, 14, SSD1306_BLACK); // clear box
+  display.setCursor(93, 4);
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.print(statusText);
+  updateVariableText(txt);
+  updateArrow(angle);
+  display.display();
+}
+
+void updateVariableText(String txt) {
+  display.fillRect(41, 23, 82, 38, SSD1306_BLACK); // Clear box area
+
+  int16_t x1, y1;
+  uint16_t w, h;
+
+  // Try text size 2
+  display.setTextSize(2);
+  display.getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
+
+  if (w > 80 || h > 38) {
+    // If too big, fallback to size 1
+    display.setTextSize(1);
+    display.getTextBounds(txt, 0, 0, &x1, &y1, &w, &h);
+  }
+
+  // Still too wide? Crop the string (optional)
+  while (w > 80 && txt.length() > 0) {
+    txt.remove(txt.length() - 1);
+    display.getTextBounds(txt + "...", 0, 0, &x1, &y1, &w, &h);
+  }
+
+  // Center it
+  int x = 40 + (84 - w) / 2;
+  int y = 22 + (40 - h) / 2;
+
+  display.setCursor(x, y);
+  display.setTextColor(SSD1306_WHITE);
+  display.print(txt);
+  display.display();
+}
+
+
+void updateArrow(int angle) {
+  // Clear old arrow
+  display.fillRect(0, 30, 30, 34, SSD1306_BLACK);
+
+  float rad = angle * PI / 180.0;
+  int x0 = 15; // origin
+  int y0 = 60;
+  int len = 20;
+  int x1 = x0 + len * sin(rad);
+  int y1 = y0 - len * cos(rad);
+
+  display.drawLine(x0, y0, x1, y1, SSD1306_WHITE);
+  display.display();
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -195,6 +315,8 @@ void setup()
     initializeRadio();
     initializeJoysticks();
     initializeButtons();
+    initializeDisplay();
+    initializeDisplayLayout();
 }
 
 void loop()
@@ -211,6 +333,7 @@ void loop()
     {
         sendCmd("mode 0");
         delay(MAX_DELAY_BETWEEN_CMDS_MS);
+        updateStatus(controlMode, "Autonomous Trackging Started", 0);
     }
     else if (controlMode == MODE_MANUAL)
     {
@@ -220,12 +343,16 @@ void loop()
         delay(10);
         sendHoeCmd();
         delay(10);
+        updateStatus(controlMode, "Put Stuff Here", 0);
     }
     else if (controlMode == MODE_STOP)
     {
         sendCmd("mode 2");
         delay(MAX_DELAY_BETWEEN_CMDS_MS);
+        updateStatus(controlMode, "STOPPED", 0);
     } else {
         Serial.println("Error: Unrecognized control mode.");
+        updateStatus(controlMode, "BROKEN", 0);
     }
+
 }
