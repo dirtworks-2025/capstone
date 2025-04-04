@@ -76,7 +76,7 @@ bool gantryHomed = false;
 
 // Standard delays
 #define HOMING_STEP_DELAY_MS 10
-#define AWAIT_NEXT_CMD_MS 100
+#define AWAIT_NEXT_CMD_MS 10
 #define TANK_DRIVE_ACCEL_DELAY_MS 10 // Delay between tank drive speed changes
 
 // Current move commands (these will be set by the command interpreter, then eexecuted in the task queue)

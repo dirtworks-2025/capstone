@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -117,10 +118,13 @@ def get_best_fit_line(pixels):
 
 # Load image (uncomment one of the following lines to test different images)
 
-image = cv2.imread("inputs/younger_with_drip_tape.jpg")
-# image = cv2.imread("inputs/older_with_drip_tape.jpg")
-# image = cv2.imread("inputs/wandering_drip_tape.jpg")
-# image = cv2.imread("inputs/synthetic.png")
+base_dir = os.path.dirname(os.path.abspath(__file__))
+image_name = "younger_with_drip_tape.jpg"
+# image_name = "older_with_drip_tape.jpg"
+# image_name = "wandering_drip_tape.jpg"
+# image_name = "synthetic.png"
+image_path = os.path.join(base_dir, "inputs", image_name)
+image = cv2.imread(image_path)
 
 # Resize image and crop to only show the bottom portion
 reduction_factor = 0.3
