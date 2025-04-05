@@ -171,6 +171,11 @@ void maybeUpdateControlMode()
 
 void sendCmd(String cmd)
 {
+    if (cmd.length() == 0)
+    {
+        Serial.println("Empty command, not sending.");
+        return;
+    }
     // Serial.println("Sending command: " + cmd);
     radio.write(cmd.c_str(), cmd.length() + 1);
 }
@@ -315,8 +320,8 @@ void setup()
     initializeRadio();
     initializeJoysticks();
     initializeButtons();
-    initializeDisplay();
-    initializeDisplayLayout();
+    // initializeDisplay();
+    // initializeDisplayLayout();
 }
 
 void loop()
@@ -333,7 +338,7 @@ void loop()
     {
         sendCmd("mode 0");
         delay(MAX_DELAY_BETWEEN_CMDS_MS);
-        updateStatus(controlMode, "Autonomous Trackging Started", 0);
+        // updateStatus(controlMode, "Autonomous Trackging Started", 0);
     }
     else if (controlMode == MODE_MANUAL)
     {
@@ -343,16 +348,16 @@ void loop()
         delay(10);
         sendHoeCmd();
         delay(10);
-        updateStatus(controlMode, "Put Stuff Here", 0);
+        // updateStatus(controlMode, "Put Stuff Here", 0);
     }
     else if (controlMode == MODE_STOP)
     {
         sendCmd("mode 2");
         delay(MAX_DELAY_BETWEEN_CMDS_MS);
-        updateStatus(controlMode, "STOPPED", 0);
+        // updateStatus(controlMode, "STOPPED", 0);
     } else {
         Serial.println("Error: Unrecognized control mode.");
-        updateStatus(controlMode, "BROKEN", 0);
+        // updateStatus(controlMode, "BROKEN", 0);
     }
 
 }

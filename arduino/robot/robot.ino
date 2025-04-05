@@ -406,7 +406,7 @@ void interpretCmd(String cmd)
     }
     else
     {
-        Serial.println("Error: Unrecognized command.");
+        Serial.println("Error: Unrecognized command: " + cmd);
     }
 }
 
