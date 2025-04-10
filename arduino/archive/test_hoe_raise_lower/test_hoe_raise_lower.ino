@@ -9,11 +9,11 @@
 #define MOTOR_BACKWARD_EN 13
 #define HOE_LIMIT_SWITCH 44
 
-#define HOE_RAISE_SPEED 40 // Requires more power to raise the hoe
-#define HOE_LOWER_SPEED 10 // Requires less power to lower the hoe
+#define HOE_RAISE_SPEED 30 // Requires more power to raise the hoe
+#define HOE_LOWER_SPEED 20 // Requires less power to lower the hoe
 
 volatile int currentHoePosition = 0; // Current encoder value
-int targetHoePivotValue = 0;           // Target encoder value
+int targetHoePosition = 0;           // Target encoder value
 
 volatile int lastCLK = digitalRead(CLK);
 volatile int lastDT = digitalRead(DT);
@@ -22,8 +22,7 @@ void setup()
 {
 
     Serial.begin(9600);
-    while (!Serial)
-        ; // Wait for serial to initialize
+    while (!Serial); // Wait for serial to initialize
 
     // put your setup code here, to run once:
     pinMode(CLK, INPUT_PULLUP);
@@ -43,19 +42,27 @@ void setup()
     attachInterrupt(digitalPinToInterrupt(DT), updateEncoder, CHANGE);
 
     homeStirrupHoe();
+    delay(1000); // Wait for the hoe to home
 }
 
 void loop()
 {
     lowerHoe();
-    stowHoe();
-
+    delay(1000);
+    raiseHoe();
     delay(1000);
 }
 
 void maybeMoveHoe()
 {
-    int delta = targetHoePivotValue - currentHoePosition;
+    int delta = targetHoePosition - currentHoePosition;
+    Serial.print("Current: ");
+    Serial.print(currentHoePosition);
+    Serial.print(" Target: ");
+    Serial.print(targetHoePosition);
+    Serial.print(" Delta: ");
+    Serial.println(delta);
+    
     // Deadzone
     if (abs(delta) < 2)
     {
@@ -74,11 +81,6 @@ void maybeMoveHoe()
     {
         analogWrite(MOTOR_FORWARD_PWM, 0);
         analogWrite(MOTOR_BACKWARD_PWM, HOE_RAISE_SPEED);
-    }
-    else
-    {
-        analogWrite(MOTOR_FORWARD_PWM, 0);
-        analogWrite(MOTOR_BACKWARD_PWM, 0);
     }
 }
 
@@ -99,27 +101,32 @@ void homeStirrupHoe()
     analogWrite(MOTOR_FORWARD_PWM, 0);
 
     currentHoePosition = -70;
-    targetHoePivotValue = -70;
+    targetHoePosition = -70;
+    Serial.println("Hoe homed.");
 }
 
 void lowerHoe()
 {
-    targetHoePivotValue = 0;
-    while (currentHoePosition != targetHoePivotValue)
+    Serial.println("Lowering hoe...");
+    targetHoePosition = 0;
+    while (abs(currentHoePosition - targetHoePosition) > 2)
     {
         maybeMoveHoe();
         delay(10);
     }
+    maybeMoveHoe();
 }
 
-void stowHoe()
+void raiseHoe()
 {
-    targetHoePivotValue = -70;
-    while (currentHoePosition != targetHoePivotValue)
+    Serial.println("Raising hoe...");
+    targetHoePosition = -70;
+    while (abs(currentHoePosition - targetHoePosition) > 2)
     {
         maybeMoveHoe();
         delay(10);
     }
+    maybeMoveHoe();
 }
 
 void updateEncoder()
