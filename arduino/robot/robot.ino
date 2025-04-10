@@ -107,16 +107,40 @@ const unsigned long CMD_TIMEOUT_MS = 1000; // must receive a command within this
 RF24 radio(CE_PIN, CSN_PIN);
 const byte address[6] = "00001";
 
+// Error handling
+String prevErrorMsg;
+
+// Logging
+bool debug = false; // Set to false to disable debug messages
+
+void throwError(String errorMsg)
+{
+    if (errorMsg == prevErrorMsg)
+    {
+        return; // Don't print the same error message twice in a row
+    }
+    Serial.println("Error: " + errorMsg);
+    prevErrorMsg = errorMsg;
+}
+
+void maybeLog(String msg)
+{
+    if (debug)
+    {
+        Serial.println(msg);
+    }
+}
+
 bool isGantryAtLimit(float nextPos)
 {
     if (digitalRead(LIMIT_SWITCH_1) == LOW || digitalRead(LIMIT_SWITCH_2) == LOW)
     {
-        Serial.println("Error: Limit switch pressed.");
+        throwError("Limit switch pressed.");
         return true;
     }
     if (nextPos < minPos || nextPos > maxPos)
     {
-        Serial.println("Error: Soft limits exceeded.");
+        throwError("Soft limits exceeded.");
         return true;
     }
     return false;
@@ -164,7 +188,6 @@ void stepForwardUntilNoLimitSwitch() {
         insertTask(HOMING_STEP_DELAY_MS, stepForwardUntilNoLimitSwitch);
     } else {
         currentPos = 0;
-        Serial.println("Hit first limit switch.");
 
         insertTask(HOMING_STEP_DELAY_MS, stepForwardUntilLimitSwitch);
     }
@@ -189,7 +212,7 @@ void stepReverseUntilSoftLimits() {
         insertTask(HOMING_STEP_DELAY_MS, stepReverseUntilSoftLimits);
     } else {
         gantryHomed = true;
-        Serial.println("Homing complete. Max position: " + String(maxPos) + " inches. Current position: " + String(currentPos) + " inches.");
+        maybeLog("Homing complete. Max position: " + String(maxPos) + " inches. Current position: " + String(currentPos) + " inches.");
     }
 }
 
@@ -301,7 +324,7 @@ void initializeGantry()
     digitalWrite(GANTRY_EN, LOW);
 
     // Home the gantry
-    Serial.println("Homing gantry...");
+    maybeLog("Homing gantry...");
     homeGantry();
 }
 
@@ -348,7 +371,7 @@ void initializeRadio()
     radio.openReadingPipe(0, address);
     radio.setPALevel(RF24_PA_MIN);
     radio.startListening();
-    Serial.println("Radio initialized.");
+    maybeLog("Radio initialized.");
 }
 
 void setup()
@@ -406,7 +429,7 @@ void interpretCmd(String cmd)
     }
     else
     {
-        Serial.println("Error: Unrecognized command: " + cmd);
+        throwError("Unrecognized command: " + cmd);
     }
 }
 
@@ -422,6 +445,11 @@ void maybeCheckForRaspiCmd()
     }
 }
 
+void broadcastToRaspi(String msg)
+{
+    Serial.println(msg);
+}
+
 void checkForRcCmd()
 {
     if (radio.available())
@@ -429,7 +457,6 @@ void checkForRcCmd()
         char text[32] = "";
         radio.read(&text, sizeof(text));
         lastCmdReceived = millis();
-        // Serial.print("Received command: " + String(text) + "\n");
         interpretCmd(String(text));
     }
     else if (millis() - lastCmdReceived > CMD_TIMEOUT_MS)
@@ -439,7 +466,7 @@ void checkForRcCmd()
         // The robot will resume when it begins receiving commands again
         if (controlMode != MODE_STOP)
         {
-            Serial.println("No command received for over " + String(CMD_TIMEOUT_MS) + " ms.");
+            maybeLog("No command received for over " + String(CMD_TIMEOUT_MS) + " ms.");
             controlMode = MODE_STOP;
             handleStop();
         }
@@ -453,7 +480,10 @@ void handleModeChange(byte newMode)
         return; // No change in mode
     }
     controlMode = newMode;
-    Serial.println("Control mode changed to " + String(newMode));
+    maybeLog("Control mode changed to " + String(newMode));
+
+    broadcastToRaspi("mode " + String(newMode));
+
     if (newMode == MODE_AUTO)
     {
 
@@ -471,7 +501,7 @@ void handleModeChange(byte newMode)
     {
         controlMode = MODE_STOP;
         handleStop();
-        Serial.println("Error: Invalid mode.");
+        throwError("Invalid mode: " + String(newMode));
     }
 }
 
@@ -490,7 +520,7 @@ void handleStop()
     gantryStepDelayMs = 0;
     hoeUpDownSpeed = 0;
 
-    Serial.println("Robot stopped.");
+    maybeLog("Robot stopped.");
 }
 
 void handleResume()
@@ -508,7 +538,7 @@ void handleResume()
     gantryStepDelayMs = 0;
     hoeUpDownSpeed = 0;
 
-    Serial.println("Robot resumed.");
+    maybeLog("Robot resumed.");
 }
 
 void loop()
