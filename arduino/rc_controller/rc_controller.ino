@@ -129,11 +129,11 @@ void sendHoeCmd()
     {
         if (yNormalized > 80)
         {
-            sendCmd("hoe -70"); // Raise hoe
+            sendCmd("hoe 0"); // Raise hoe
         }
         else if (yNormalized < -80)
         {
-            sendCmd("hoe 0"); // Lower hoe
+            sendCmd("hoe -60"); // Lower hoe
         }
     }
 }
