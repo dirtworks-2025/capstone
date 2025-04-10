@@ -23,7 +23,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // Button pins
 #define STOP_MODE_BUTTON 2
 #define AUTO_MODE_BUTTON 3
-#define STRAIGHT_MODE_BUTTON 4 // might change this button to binary raise/lower stirrup hoe
+#define REVERSE_AUTO_MODE_BUTTON 4 // might change this button to binary raise/lower stirrup hoe
 #define FAST_MODE_BUTTON 5
 
 // Mode state
@@ -52,8 +52,9 @@ RF24 radio(CE_PIN, CSN_PIN);
 
 // Command types:
 // drive <leftSpeed> <rightSpeed>
-// hoe <gantryStepDelay_uS> <upDownSpeed>
-// mode <number> (0 = auto, 1 = manual, 2 = stop)
+// gantry <gantryStepDelay_uS> 
+// hoe <targetHoePosition>
+// mode <number> (0 = auto, 1 = manual, 2 = stop) <FORWARD / BACKWARD> (auto mode only)
 
 void sendDriveCmd()
 {
@@ -90,25 +91,7 @@ void sendDriveCmd()
     int rightTankDriveSpeed = (yNormalized + xNormalized) * (255 / 2) * speedLimit;
     int leftTankDriveSpeed = (yNormalized - xNormalized) * (255 / 2) * speedLimit;
 
-    if (digitalRead(STRAIGHT_MODE_BUTTON) == HIGH)
-    {
-        sendDriveCmdWithNoVectoring(leftTankDriveSpeed, rightTankDriveSpeed);
-        return;
-    }
-
     sendCmd("drive " + String(leftTankDriveSpeed) + " " + String(rightTankDriveSpeed));
-}
-
-void sendDriveCmdWithNoVectoring(int leftTankDriveSpeed, int rightTankDriveSpeed)
-{
-    // Set deadzone that only allows for nearly equal speeds
-    if (abs(leftTankDriveSpeed - rightTankDriveSpeed) > 20)
-    {
-        sendCmd("drive 0 0");
-        return;
-    }
-    int speedToSend = (leftTankDriveSpeed + rightTankDriveSpeed) / 2;
-    sendCmd("drive " + String(speedToSend) + " " + String(speedToSend));
 }
 
 void sendHoeCmd()
@@ -131,7 +114,7 @@ void sendHoeCmd()
     // Escape if both axes are in the deadzone
     if (xNormalized == 0 && yNormalized == 0)
     {
-        sendCmd("hoe 0 0");
+        sendCmd("gantry 0");
         return;
     }
 
@@ -140,13 +123,18 @@ void sendHoeCmd()
     {
         int stepDelay_uS = map(abs(xNormalized), 0, 100, SLOW_STEP_DELAY_uS, FAST_STEP_DELAY_uS);
         int gantryStepDelay_uS= xNormalized > 0 ? -stepDelay_uS : stepDelay_uS;
-        sendCmd("hoe " + String(gantryStepDelay_uS) + " 0");
+        sendCmd("gantry " + String(gantryStepDelay_uS));
     }
     else
     {
-        int upDownSpeed = map(abs(yNormalized), 0, 100, 0, 255);
-        int upDownDir = yNormalized > 0 ? -1 : 1;
-        sendCmd("hoe 0 " + String(upDownSpeed * upDownDir));
+        if (yNormalized > 80)
+        {
+            sendCmd("hoe -70"); // Raise hoe
+        }
+        else if (yNormalized < -80)
+        {
+            sendCmd("hoe 0"); // Lower hoe
+        }
     }
 }
 
@@ -192,7 +180,7 @@ void initializeButtons()
 {
     pinMode(AUTO_MODE_BUTTON, INPUT);
     pinMode(STOP_MODE_BUTTON, INPUT);
-    pinMode(STRAIGHT_MODE_BUTTON, INPUT);
+    pinMode(REVERSE_AUTO_MODE_BUTTON, INPUT);
     pinMode(FAST_MODE_BUTTON, INPUT);
 }
 
@@ -336,7 +324,14 @@ void loop()
 
     if (controlMode == MODE_AUTO)
     {
-        sendCmd("mode 0");
+        if (digitalRead(REVERSE_AUTO_MODE_BUTTON) == HIGH)
+        {
+            sendCmd("mode 0 BACKWARD");
+        }
+        else
+        {
+            sendCmd("mode 0 FORWARD");
+        }
         delay(MAX_DELAY_BETWEEN_CMDS_MS);
         // updateStatus(controlMode, "Autonomous Trackging Started", 0);
     }

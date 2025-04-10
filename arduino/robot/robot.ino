@@ -62,10 +62,26 @@ void runAllReadyTasks()
 #define LEFT_BACKWARD_EN     9
 
 // Stirrup hoe forward / backward pins
+#define HOE_ENCODER_CLK 18
+#define HOE_ENCODER_DT 19
+
 #define HOE_FORWARD_PWM 11
 #define HOE_BACKWARD_PWM 10
 #define HOE_FORWARD_EN 12
 #define HOE_BACKWARD_EN 13
+
+#define HOE_LIMIT_SWITCH 44
+
+// Hoe speeds and variables
+#define HOE_UP_SPEED 30
+#define HOE_DOWN_SPEED 15
+
+#define HOE_HOME_POSITION -70 // Encoder counts
+
+volatile int currentHoePosition = 0; // Measured in encoder counts
+
+volatile int lastHoeEncoderCLK = 0;
+volatile int lastHoeEncoderDT = 0;
 
 // Gantry position and limits
 const float IN_PER_STEP = 0.025; // Estimated distance per step
@@ -83,7 +99,7 @@ bool gantryHomed = false;
 int cmdRightTankDriveSpeed = 0;
 int cmdLeftTankDriveSpeed = 0;
 float gantryStepDelayMs = 0; // Delay between steps in milliseconds (0 = stopped, positive = forward, negative = reverse)
-int hoeUpDownSpeed = 0;
+int targetHoePosition = 0;
 
 // Current tank drive speeds (these will lag the commands slightly so the motors can accelerate / decelerate)
 int currentRightTankDriveSpeed = 0;
@@ -221,6 +237,31 @@ void homeGantry()
     insertTask(0, stepReverseUntilLimitSwitch);
 }
 
+// This is not designed to be homed asychronously because I don't want the 
+// robot driving until we know where the hoe is
+void homeHoe()
+{
+    maybeLog("Homing hoe...");
+    while (digitalRead(HOE_LIMIT_SWITCH) == HIGH)
+    {
+        analogWrite(HOE_FORWARD_PWM, HOE_UP_SPEED);
+        analogWrite(HOE_BACKWARD_PWM, 0);
+    }
+    analogWrite(HOE_FORWARD_PWM, 0);
+    
+    while (digitalRead(HOE_LIMIT_SWITCH) == LOW)
+    {
+        analogWrite(HOE_FORWARD_PWM, 0);
+        analogWrite(HOE_BACKWARD_PWM, HOE_DOWN_SPEED);
+    }
+    analogWrite(HOE_FORWARD_PWM, 0);
+    analogWrite(HOE_BACKWARD_PWM, 0);
+
+    currentHoePosition = HOE_HOME_POSITION;
+    targetHoePosition = HOE_HOME_POSITION;
+    maybeLog("Hoe homing complete. Current position: " + String(currentHoePosition));
+}
+
 // If the gantry is enabled, take a step in the given direction
 // and schedule the next step based on the given delay
 void maybeMoveGantry()
@@ -233,17 +274,45 @@ void maybeMoveGantry()
     }
 }
 
-void maybeMoveHoeUpDown()
+void dontMoveHoe()
 {
-    if (hoeUpDownSpeed > 0)
+    // Stop the hoe from moving, but check again later
+    analogWrite(HOE_FORWARD_PWM, 0);
+    analogWrite(HOE_BACKWARD_PWM, 0);
+    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoe);
+}
+
+void maybeMoveHoe()
+{
+    // Verify the target position is within the limits of the hoe
+    const int hoeSoftLimitMargin = 5;
+    if (targetHoePosition < HOE_HOME_POSITION + hoeSoftLimitMargin) {
+        dontMoveHoe();
+        return;
+    }
+    if (targetHoePosition > -hoeSoftLimitMargin) {
+        dontMoveHoe();
+        return;
+    }
+
+    int delta = targetHoePosition - currentHoePosition;
+
+    // Deadzone 
+    if (abs(delta) < 2)
     {
-        analogWrite(HOE_FORWARD_PWM, hoeUpDownSpeed);
+        dontMoveHoe();
+        return;
+    }
+
+    if (delta > 0)
+    {
+        analogWrite(HOE_FORWARD_PWM, HOE_DOWN_SPEED);
         analogWrite(HOE_BACKWARD_PWM, 0);
     }
-    else if (hoeUpDownSpeed < 0)
+    else if (delta < 0)
     {
         analogWrite(HOE_FORWARD_PWM, 0);
-        analogWrite(HOE_BACKWARD_PWM, -hoeUpDownSpeed);
+        analogWrite(HOE_BACKWARD_PWM, HOE_UP_SPEED);
     }
     else
     {
@@ -251,7 +320,7 @@ void maybeMoveHoeUpDown()
         analogWrite(HOE_BACKWARD_PWM, 0);
     }
 
-    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoeUpDown);
+    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoe);
 }
 
 void maybeMoveTankDrive()
@@ -353,16 +422,30 @@ void initializeTankDrive()
 
 void initializeHoe()
 {
+    pinMode(HOE_ENCODER_CLK, INPUT_PULLUP);
+    pinMode(HOE_ENCODER_DT, INPUT_PULLUP);
+
     pinMode(HOE_FORWARD_PWM, OUTPUT);
     pinMode(HOE_BACKWARD_PWM, OUTPUT);
     pinMode(HOE_FORWARD_EN, OUTPUT);
     pinMode(HOE_BACKWARD_EN, OUTPUT);
 
+    pinMode(HOE_LIMIT_SWITCH, INPUT_PULLUP);
+
     digitalWrite(HOE_FORWARD_PWM, LOW);
     digitalWrite(HOE_BACKWARD_PWM, LOW);
-
     digitalWrite(HOE_FORWARD_EN, HIGH);
     digitalWrite(HOE_BACKWARD_EN, HIGH);
+
+    attachInterrupt(digitalPinToInterrupt(HOE_ENCODER_CLK), updateHoeEncoder, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(HOE_ENCODER_DT), updateHoeEncoder, CHANGE);
+
+    lastHoeEncoderCLK = digitalRead(HOE_ENCODER_CLK);
+    lastHoeEncoderDT = digitalRead(HOE_ENCODER_DT);
+
+    // Home the hoe
+    maybeLog("Homing hoe...");
+    
 }
 
 void initializeRadio() 
@@ -378,23 +461,18 @@ void setup()
 {
     Serial.begin(115200);
     delay(500);
+    initializeRadio();
+    initializeHoe(); // Want to home hoe before gantry
     initializeGantry();
     initializeTankDrive();
-    initializeHoe();
-    initializeRadio();
     // Schedule the first move tasks
     // These tasks will infinitely reschedule themselves until the program is terminated
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
-    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoeUpDown);
+    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoe);
 }
 
-// Command types:
-// drive <leftSpeed> <rightSpeed>
-// hoe <gantryStepDelay_uS> <upDownSpeed>
-// mode <number> (0 = auto, 1 = manual, 2 = stop)
-
-// Note: Commands are initially interpretted generically as <token1> <token2> <token3>
+// Command types described in comment in rc_controller.ino
 void interpretCmd(String cmd)
 {
     String tokens[3];
@@ -413,19 +491,23 @@ void interpretCmd(String cmd)
         charIdx++;
     }
 
+    // TODO: better data validation
     if (tokens[0] == "drive")
     {
         cmdRightTankDriveSpeed = tokens[1].toInt();
         cmdLeftTankDriveSpeed = tokens[2].toInt();
     }
-    else if (tokens[0] == "hoe")
+    else if (tokens[0] == "gantry")
     {
         gantryStepDelayMs = tokens[1].toInt() / 1000; // Convert microseconds to milliseconds
-        hoeUpDownSpeed = tokens[2].toInt();
+    }
+    else if (tokens[0] == "hoe")
+    {
+        targetHoePosition = tokens[1].toInt();
     }
     else if (tokens[0] == "mode")
     {
-        handleModeChange(tokens[1].toInt());
+        handleModeChange(tokens[1].toInt(), cmd);
     }
     else
     {
@@ -473,7 +555,7 @@ void checkForRcCmd()
     }
 }
 
-void handleModeChange(byte newMode)
+void handleModeChange(byte newMode, String cmd)
 {
     if (newMode == controlMode)
     {
@@ -482,11 +564,10 @@ void handleModeChange(byte newMode)
     controlMode = newMode;
     maybeLog("Control mode changed to " + String(newMode));
 
-    broadcastToRaspi("mode " + String(newMode));
+    broadcastToRaspi(cmd);
 
     if (newMode == MODE_AUTO)
     {
-
         handleResume();
     }
     else if (newMode == MODE_MANUAL)
@@ -518,7 +599,7 @@ void handleStop()
     currentRightTankDriveSpeed = 0;
     currentLeftTankDriveSpeed = 0;
     gantryStepDelayMs = 0;
-    hoeUpDownSpeed = 0;
+    targetHoePosition = currentHoePosition;
 
     maybeLog("Robot stopped.");
 }
@@ -536,7 +617,7 @@ void handleResume()
     currentRightTankDriveSpeed = 0;
     currentLeftTankDriveSpeed = 0;
     gantryStepDelayMs = 0;
-    hoeUpDownSpeed = 0;
+    targetHoePosition = currentHoePosition;
 
     maybeLog("Robot resumed.");
 }
@@ -546,4 +627,36 @@ void loop()
     checkForRcCmd();
     maybeCheckForRaspiCmd();
     runAllReadyTasks();
+}
+
+void updateHoeEncoder()
+{
+    int currentCLK = digitalRead(HOE_ENCODER_CLK);
+    int currentDT = digitalRead(HOE_ENCODER_DT);
+
+    if (currentCLK != lastHoeEncoderCLK)
+    {
+        if (currentDT != currentCLK)
+        {
+            currentHoePosition++; // CW
+        }
+        else
+        {
+            currentHoePosition--; // CCW
+        }
+    }
+    else if (currentDT != lastHoeEncoderDT)
+    {
+        if (currentDT != currentCLK)
+        {
+            currentHoePosition--; // CW
+        }
+        else
+        {
+            currentHoePosition++; // CCW
+        }
+    }
+
+    lastHoeEncoderCLK = currentCLK;
+    lastHoeEncoderDT = currentDT;
 }
