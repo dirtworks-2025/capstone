@@ -1,41 +1,155 @@
 #include <Arduino.h>
 
-#define ENCODER_A 2
-#define ENCODER_B 3
+#define CLK 18 // Clock pin / Hall Sensor A / Green wire
+#define DT 19  // Data pin / Hall Sensor B / Yellow wire
 
-#define NO_SIGNAL  0
-#define A_RISING   1
-#define A_FALLING  2
-#define B_RISING   3
-#define B_FALLING  4
+#define MOTOR_FORWARD_PWM 11
+#define MOTOR_BACKWARD_PWM 10
+#define MOTOR_FORWARD_EN 12
+#define MOTOR_BACKWARD_EN 13
+#define HOE_LIMIT_SWITCH 44
 
-#define FORWARD  0
-#define BACKWARD 1
+#define HOE_RAISE_SPEED 40 // Requires more power to raise the hoe
+#define HOE_LOWER_SPEED 10 // Requires less power to lower the hoe
 
-int encoderPos = 0;
-int lastSignal = NO_SIGNAL;
-bool dir = FORWARD;
+volatile int currentHoePosition = 0; // Current encoder value
+int targetHoePivotValue = 0;           // Target encoder value
 
-void setup() {
-    attachInterrupt(digitalPinToInterrupt(ENCODER_A), rise_A, RISING);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_B), rise_B, RISING);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_B), fall_B, FALLING);
-    attachInterrupt(digitalPinToInterrupt(ENCODER_A), fall_A, FALLING);
+volatile int lastCLK = digitalRead(CLK);
+volatile int lastDT = digitalRead(DT);
+
+void setup()
+{
+
+    Serial.begin(9600);
+    while (!Serial)
+        ; // Wait for serial to initialize
+
+    // put your setup code here, to run once:
+    pinMode(CLK, INPUT_PULLUP);
+    pinMode(DT, INPUT_PULLUP);
+    pinMode(MOTOR_FORWARD_PWM, OUTPUT);
+    pinMode(MOTOR_BACKWARD_PWM, OUTPUT);
+    pinMode(MOTOR_FORWARD_EN, OUTPUT);
+    pinMode(MOTOR_BACKWARD_EN, OUTPUT);
+    pinMode(HOE_LIMIT_SWITCH, INPUT_PULLUP);
+
+    analogWrite(MOTOR_FORWARD_PWM, 0);
+    analogWrite(MOTOR_BACKWARD_PWM, 0);
+    digitalWrite(MOTOR_FORWARD_EN, HIGH);
+    digitalWrite(MOTOR_BACKWARD_EN, HIGH);
+
+    attachInterrupt(digitalPinToInterrupt(CLK), updateEncoder, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(DT), updateEncoder, CHANGE);
+
+    homeStirrupHoe();
 }
 
-void loop() {
+void loop()
+{
+    lowerHoe();
+    stowHoe();
 
+    delay(1000);
 }
 
-void rise_A() {
-    if (lastSignal == NO_SIGNAL) {
-        lastSignal = A_RISING;
-    } else if (lastSignal == A_FALLING) {
-        dir = !dir;
-    else if (lastSignal == B_RISING) {
-        encoderPos--;
-    } else if (lastSignal == B_FALLING) {
-        encoderPos--;
+void maybeMoveHoe()
+{
+    int delta = targetHoePivotValue - currentHoePosition;
+    // Deadzone
+    if (abs(delta) < 2)
+    {
+        analogWrite(MOTOR_FORWARD_PWM, 0);
+        analogWrite(MOTOR_BACKWARD_PWM, 0);
+        return;
     }
-    lastSignal = A_RISING;
+
+    // Move the hoe motor in the direction of the target value
+    if (delta > 0)
+    {
+        analogWrite(MOTOR_FORWARD_PWM, HOE_LOWER_SPEED);
+        analogWrite(MOTOR_BACKWARD_PWM, 0);
+    }
+    else if (delta < 0)
+    {
+        analogWrite(MOTOR_FORWARD_PWM, 0);
+        analogWrite(MOTOR_BACKWARD_PWM, HOE_RAISE_SPEED);
+    }
+    else
+    {
+        analogWrite(MOTOR_FORWARD_PWM, 0);
+        analogWrite(MOTOR_BACKWARD_PWM, 0);
+    }
+}
+
+void homeStirrupHoe()
+{
+    while (digitalRead(HOE_LIMIT_SWITCH) == HIGH)
+    {
+        analogWrite(MOTOR_BACKWARD_PWM, HOE_RAISE_SPEED);
+        analogWrite(MOTOR_FORWARD_PWM, 0);
+    }
+    analogWrite(MOTOR_BACKWARD_PWM, 0);
+
+    while (digitalRead(HOE_LIMIT_SWITCH) == LOW)
+    {
+        analogWrite(MOTOR_FORWARD_PWM, HOE_LOWER_SPEED);
+        analogWrite(MOTOR_BACKWARD_PWM, 0);
+    }
+    analogWrite(MOTOR_FORWARD_PWM, 0);
+
+    currentHoePosition = -70;
+    targetHoePivotValue = -70;
+}
+
+void lowerHoe()
+{
+    targetHoePivotValue = 0;
+    while (currentHoePosition != targetHoePivotValue)
+    {
+        maybeMoveHoe();
+        delay(10);
+    }
+}
+
+void stowHoe()
+{
+    targetHoePivotValue = -70;
+    while (currentHoePosition != targetHoePivotValue)
+    {
+        maybeMoveHoe();
+        delay(10);
+    }
+}
+
+void updateEncoder()
+{
+    int currentCLK = digitalRead(CLK);
+    int currentDT = digitalRead(DT);
+
+    if (currentCLK != lastCLK)
+    {
+        if (currentDT != currentCLK)
+        {
+            currentHoePosition++; // CW
+        }
+        else
+        {
+            currentHoePosition--; // CCW
+        }
+    }
+    else if (currentDT != lastDT)
+    {
+        if (currentDT != currentCLK)
+        {
+            currentHoePosition--; // CW
+        }
+        else
+        {
+            currentHoePosition++; // CCW
+        }
+    }
+
+    lastCLK = currentCLK;
+    lastDT = currentDT;
 }
