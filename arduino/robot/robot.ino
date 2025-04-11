@@ -490,8 +490,8 @@ void initializeHoe()
     lastHoeEncoderDT = digitalRead(HOE_ENCODER_DT);
 
     // Home the hoe
-    // maybeLog("Homing hoe...");
-    // homeHoe();
+    maybeLog("Homing hoe...");
+    homeHoe();
 }
 
 void initializeRadio()
