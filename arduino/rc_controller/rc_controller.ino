@@ -133,7 +133,7 @@ void sendHoeCmd()
         }
         else if (yNormalized < -80)
         {
-            sendCmd("hoe -70"); // Raise hoe
+            sendCmd("hoe home"); // Raise hoe
         }
     }
 }

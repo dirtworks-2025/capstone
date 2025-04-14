@@ -78,6 +78,7 @@ void runAllReadyTasks()
 
 #define HOE_HOME_POSITION -80 // Encoder counts
 bool hoeHomed = false; // True if the hoe has been homed
+bool hoeIsHoming = false;
 
 volatile int currentHoePosition = 0; // Measured in encoder counts
 
@@ -90,6 +91,7 @@ float currentPos = 0;            // Inches
 float minPos = 0;                // Inches - Soft limit - Will be set to 2 inches from lower limit switch after homing
 float maxPos = 0;                // Inches - Soft limit - Will be set to 2 inches from upper limit switch after homing
 bool gantryHomed = false;
+bool gantryIsHoming = false;
 
 // Standard delays
 #define GANTRY_HOMING_STEP_DELAY_MS 10
@@ -158,7 +160,7 @@ bool isGantryAtLimit(float nextPos)
     }
     if (nextPos < minPos || nextPos > maxPos)
     {
-        throwError("Soft limits exceeded.");
+        throwError("Gantry soft limits exceeded.");
         return true;
     }
     return false;
@@ -245,20 +247,24 @@ void stepReverseUntilSoftLimits()
     }
     else
     {
+        gantryIsHoming = false;
         gantryHomed = true;
 
-        // Add gantry and hoe move tasks to the queue, now that homing is complete
+        // Add gantry move task to the queue, now that homing is complete
         insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
-        insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoe);
 
         maybeLog("Homing complete. Max position: " + String(maxPos) + " inches. Current position: " + String(currentPos) + " inches.");
     }
 }
 
-void homeGantry()
+void maybeHomeGantry()
 {
-    maybeLog("Homing gantry...");
-    insertTask(1000, stepReverseUntilLimitSwitch);
+    if (!gantryIsHoming) {
+        maybeLog("Homing gantry...");
+        insertTask(1000, stepReverseUntilLimitSwitch);
+        gantryHomed = false;
+        gantryIsHoming = true;
+    }
 }
 
 void raiseHoeUntilLimitSwitch()
@@ -292,23 +298,33 @@ void lowerHoeUntilNoLimitSwitch()
         analogWrite(HOE_FORWARD_PWM, 0);
         analogWrite(HOE_BACKWARD_PWM, 0);
 
+        hoeIsHoming = false;
         hoeHomed = true;
         currentHoePosition = HOE_HOME_POSITION;
         targetHoePosition = HOE_HOME_POSITION + 10; // Just outside soft limits
 
         maybeLog("Hoe homing complete. Current position: " + String(currentHoePosition) + " counts.");
         maybeLog("Moving hoe to stow position: " + String(targetHoePosition) + " counts.");
+        
+        // Add gantry move task to the queue, now that homing is complete
+        insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoe);
 
-        homeGantry(); // Start homing the gantry
+        if (!gantryHomed) { // Only home if the gantry hasn't been homed yet
+            maybeHomeGantry(); // Start homing the gantry
+        }
     }
 }
 
 // This is not designed to be homed asychronously because I don't want the
 // robot driving until we know where the hoe is
-void homeHoeThenGantry()
+void maybeHomeHoeThenMaybeHomeGantry()
 {
-    maybeLog("Homing hoe...");
-    insertTask(0, raiseHoeUntilLimitSwitch);
+    if (!hoeIsHoming) {
+        maybeLog("Homing hoe...");
+        hoeHomed = false;
+        hoeIsHoming = true;
+        insertTask(0, raiseHoeUntilLimitSwitch);
+    }
 }
 
 // If the gantry is enabled, take a step in the given direction
@@ -331,7 +347,10 @@ void dontMoveHoe()
     // Stop the hoe from moving, but check again later
     analogWrite(HOE_FORWARD_PWM, 0);
     analogWrite(HOE_BACKWARD_PWM, 0);
-    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoe);
+    if (hoeHomed) { // Stop trying to move the hoe if it is in a homing cycle
+        // When it finishes the homing cycle, this task will be added again
+        insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoe);
+    }
 }
 
 void maybeMoveHoe()
@@ -521,7 +540,7 @@ void setup()
     initializeTankDrive();
 
     // Home the gantry and hoe
-    homeHoeThenGantry();
+    maybeHomeHoeThenMaybeHomeGantry();
 
     // Schedule the first move tasks
     // These tasks will infinitely reschedule themselves until the program is terminated
@@ -560,6 +579,11 @@ void interpretCmd(String cmd)
     }
     else if (tokens[0] == "hoe")
     {
+        if (tokens[1] == "home") {
+            maybeHomeHoeThenMaybeHomeGantry();
+            return;
+        }
+        maybeLog("Moving hoe to position: " + String(tokens[1].toInt()) + ". Current position: " + String(currentHoePosition));
         targetHoePosition = tokens[1].toInt();
     }
     else if (tokens[0] == "mode")
