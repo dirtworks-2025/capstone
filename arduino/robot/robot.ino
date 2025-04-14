@@ -76,7 +76,7 @@ void runAllReadyTasks()
 #define HOE_UP_SPEED 30
 #define HOE_DOWN_SPEED 15
 
-#define HOE_HOME_POSITION -70 // Encoder counts
+#define HOE_HOME_POSITION -80 // Encoder counts
 bool hoeHomed = false; // True if the hoe has been homed
 
 volatile int currentHoePosition = 0; // Measured in encoder counts
@@ -92,7 +92,8 @@ float maxPos = 0;                // Inches - Soft limit - Will be set to 2 inche
 bool gantryHomed = false;
 
 // Standard delays
-#define HOMING_STEP_DELAY_MS 10
+#define GANTRY_HOMING_STEP_DELAY_MS 10
+#define HOE_HOMING_LOOP_DELAY_MS 10
 #define AWAIT_NEXT_CMD_MS 10
 #define TANK_DRIVE_ACCEL_DELAY_MS 10 // Delay between tank drive speed changes
 
@@ -195,11 +196,11 @@ void stepReverseUntilLimitSwitch()
     gantryHomeStepReverse();
     if (digitalRead(LIMIT_SWITCH_1) == HIGH)
     {
-        insertTask(HOMING_STEP_DELAY_MS, stepReverseUntilLimitSwitch);
+        insertTask(GANTRY_HOMING_STEP_DELAY_MS, stepReverseUntilLimitSwitch);
     }
     else
     {
-        insertTask(HOMING_STEP_DELAY_MS, stepForwardUntilNoLimitSwitch);
+        insertTask(GANTRY_HOMING_STEP_DELAY_MS, stepForwardUntilNoLimitSwitch);
     }
 }
 
@@ -208,13 +209,13 @@ void stepForwardUntilNoLimitSwitch()
     gantryHomeStepForward();
     if (digitalRead(LIMIT_SWITCH_1) == LOW)
     {
-        insertTask(HOMING_STEP_DELAY_MS, stepForwardUntilNoLimitSwitch);
+        insertTask(GANTRY_HOMING_STEP_DELAY_MS, stepForwardUntilNoLimitSwitch);
     }
     else
     {
         currentPos = 0;
 
-        insertTask(HOMING_STEP_DELAY_MS, stepForwardUntilLimitSwitch);
+        insertTask(GANTRY_HOMING_STEP_DELAY_MS, stepForwardUntilLimitSwitch);
     }
 }
 
@@ -223,7 +224,7 @@ void stepForwardUntilLimitSwitch()
     gantryHomeStepForward();
     if (digitalRead(LIMIT_SWITCH_2) == HIGH)
     {
-        insertTask(HOMING_STEP_DELAY_MS, stepForwardUntilLimitSwitch);
+        insertTask(GANTRY_HOMING_STEP_DELAY_MS, stepForwardUntilLimitSwitch);
     }
     else
     {
@@ -231,7 +232,7 @@ void stepForwardUntilLimitSwitch()
         maxPos = currentPos - 2;
         minPos = 2;
 
-        insertTask(HOMING_STEP_DELAY_MS, stepReverseUntilSoftLimits);
+        insertTask(GANTRY_HOMING_STEP_DELAY_MS, stepReverseUntilSoftLimits);
     }
 }
 
@@ -240,58 +241,74 @@ void stepReverseUntilSoftLimits()
     gantryHomeStepReverse();
     if (currentPos > maxPos)
     {
-        insertTask(HOMING_STEP_DELAY_MS, stepReverseUntilSoftLimits);
+        insertTask(GANTRY_HOMING_STEP_DELAY_MS, stepReverseUntilSoftLimits);
     }
     else
     {
         gantryHomed = true;
+
+        // Add gantry and hoe move tasks to the queue, now that homing is complete
+        insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
+        insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoe);
+
         maybeLog("Homing complete. Max position: " + String(maxPos) + " inches. Current position: " + String(currentPos) + " inches.");
     }
 }
 
 void homeGantry()
 {
-    insertTask(0, stepReverseUntilLimitSwitch);
+    maybeLog("Homing gantry...");
+    insertTask(1000, stepReverseUntilLimitSwitch);
+}
+
+void raiseHoeUntilLimitSwitch()
+{
+    // Move the hoe toward the limit switch until it is pressed
+    if (digitalRead(HOE_LIMIT_SWITCH) == HIGH)
+    {
+        analogWrite(HOE_FORWARD_PWM, HOE_UP_SPEED);
+        analogWrite(HOE_BACKWARD_PWM, 0);
+        insertTask(HOE_HOMING_LOOP_DELAY_MS, raiseHoeUntilLimitSwitch);
+    }
+    else
+    {
+        analogWrite(HOE_FORWARD_PWM, 0);
+        analogWrite(HOE_BACKWARD_PWM, 0);
+        insertTask(HOE_HOMING_LOOP_DELAY_MS, lowerHoeUntilNoLimitSwitch);
+    }
+}
+
+void lowerHoeUntilNoLimitSwitch()
+{
+    // Move the hoe down until the limit switch is not pressed
+    if (digitalRead(HOE_LIMIT_SWITCH) == LOW)
+    {
+        analogWrite(HOE_FORWARD_PWM, 0);
+        analogWrite(HOE_BACKWARD_PWM, HOE_DOWN_SPEED);
+        insertTask(HOE_HOMING_LOOP_DELAY_MS, lowerHoeUntilNoLimitSwitch);
+    }
+    else
+    {
+        analogWrite(HOE_FORWARD_PWM, 0);
+        analogWrite(HOE_BACKWARD_PWM, 0);
+
+        hoeHomed = true;
+        currentHoePosition = HOE_HOME_POSITION;
+        targetHoePosition = HOE_HOME_POSITION + 10; // Just outside soft limits
+
+        maybeLog("Hoe homing complete. Current position: " + String(currentHoePosition) + " counts.");
+        maybeLog("Moving hoe to stow position: " + String(targetHoePosition) + " counts.");
+
+        homeGantry(); // Start homing the gantry
+    }
 }
 
 // This is not designed to be homed asychronously because I don't want the
 // robot driving until we know where the hoe is
-void homeHoe()
+void homeHoeThenGantry()
 {
-    while (digitalRead(HOE_LIMIT_SWITCH) == HIGH)
-    {
-        analogWrite(HOE_FORWARD_PWM, HOE_UP_SPEED);
-        analogWrite(HOE_BACKWARD_PWM, 0);
-        delay(10);
-    }
-    analogWrite(HOE_FORWARD_PWM, 0);
-    maybeLog("Hoe limit switch pressed. Moving hoe down.");
-
-    while (digitalRead(HOE_LIMIT_SWITCH) == LOW)
-    {
-        analogWrite(HOE_FORWARD_PWM, 0);
-        analogWrite(HOE_BACKWARD_PWM, HOE_DOWN_SPEED);
-        delay(10);
-    }
-    analogWrite(HOE_FORWARD_PWM, 0);
-    analogWrite(HOE_BACKWARD_PWM, 0);
-
-    delay(1000); // Wait for the hoe to stop moving
-
-    currentHoePosition = HOE_HOME_POSITION;
-    targetHoePosition = HOE_HOME_POSITION / 2; // Lower halfway down
-
-    maybeLog("Hoe homing complete. Current position: " + String(currentHoePosition) + " counts.");
-
-    maybeLog("Moving hoe to stow position: " + String(targetHoePosition) + " counts.");
-
-    while (targetHoePosition > currentHoePosition) {
-        analogWrite(HOE_FORWARD_PWM, 0);
-        analogWrite(HOE_BACKWARD_PWM, HOE_DOWN_SPEED);
-        delay(10);
-    }
-
-    hoeHomed = true;
+    maybeLog("Homing hoe...");
+    insertTask(0, raiseHoeUntilLimitSwitch);
 }
 
 // If the gantry is enabled, take a step in the given direction
@@ -319,6 +336,12 @@ void dontMoveHoe()
 
 void maybeMoveHoe()
 {
+    if (!hoeHomed) 
+    {
+        throwError("Hoe not homed. Cannot move hoe.");
+        dontMoveHoe();
+        return;
+    }
     // Verify the target position is within the limits of the hoe
     const int hoeSoftLimitMargin = 5;
     if (targetHoePosition < HOE_HOME_POSITION + hoeSoftLimitMargin)
@@ -339,13 +362,6 @@ void maybeMoveHoe()
     // Deadzone
     if (abs(delta) < 2)
     {
-        dontMoveHoe();
-        return;
-    }
-
-    if (!hoeHomed)
-    {
-        throwError("Hoe not homed. Cannot move hoe.");
         dontMoveHoe();
         return;
     }
@@ -437,10 +453,6 @@ void initializeGantry()
     pinMode(LIMIT_SWITCH_2, INPUT_PULLUP);
 
     digitalWrite(GANTRY_EN, LOW);
-
-    // Home the gantry
-    maybeLog("Homing gantry...");
-    homeGantry();
 }
 
 void initializeTankDrive()
@@ -488,10 +500,6 @@ void initializeHoe()
 
     lastHoeEncoderCLK = digitalRead(HOE_ENCODER_CLK);
     lastHoeEncoderDT = digitalRead(HOE_ENCODER_DT);
-
-    // Home the hoe
-    maybeLog("Homing hoe...");
-    homeHoe();
 }
 
 void initializeRadio()
@@ -508,14 +516,17 @@ void setup()
     Serial.begin(115200);
     delay(500);
     initializeRadio();
-    initializeHoe(); // Want to home hoe before gantry
+    initializeHoe();
     initializeGantry();
     initializeTankDrive();
+
+    // Home the gantry and hoe
+    homeHoeThenGantry();
+
     // Schedule the first move tasks
     // These tasks will infinitely reschedule themselves until the program is terminated
-    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveGantry);
+    // Note: the gantry and hoe tasks will be scheduled to run after homing is complete
     insertTask(AWAIT_NEXT_CMD_MS, maybeMoveTankDrive);
-    insertTask(AWAIT_NEXT_CMD_MS, maybeMoveHoe);
 }
 
 // Command types described in comment in rc_controller.ino
@@ -639,6 +650,8 @@ void handleStop()
     digitalWrite(RIGHT_BACKWARD_EN, LOW);
     digitalWrite(LEFT_FORWARD_EN, LOW);
     digitalWrite(LEFT_BACKWARD_EN, LOW);
+    digitalWrite(HOE_FORWARD_EN, LOW);
+    digitalWrite(HOE_BACKWARD_EN, LOW);
 
     cmdRightTankDriveSpeed = 0;
     cmdLeftTankDriveSpeed = 0;

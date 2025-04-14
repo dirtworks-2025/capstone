@@ -122,18 +122,18 @@ void sendHoeCmd()
     if (abs(xNormalized) > abs(yNormalized))
     {
         int stepDelay_uS = map(abs(xNormalized), 0, 100, SLOW_STEP_DELAY_uS, FAST_STEP_DELAY_uS);
-        int gantryStepDelay_uS= xNormalized > 0 ? -stepDelay_uS : stepDelay_uS;
+        int gantryStepDelay_uS = xNormalized > 0 ? -stepDelay_uS : stepDelay_uS;
         sendCmd("gantry " + String(gantryStepDelay_uS));
     }
     else
     {
         if (yNormalized > 80)
         {
-            sendCmd("hoe 0"); // Raise hoe
+            sendCmd("hoe 0"); // Lower hoe
         }
         else if (yNormalized < -80)
         {
-            sendCmd("hoe -60"); // Lower hoe
+            sendCmd("hoe -70"); // Raise hoe
         }
     }
 }
@@ -209,13 +209,13 @@ void initializeDisplayLayout() {
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
-  display.print("ROW-BOT");
+  display.print("ROW-RIDER");
 
   // Status message box (top right)
-  display.drawRect(90, 0, 38, 16, SSD1306_WHITE);
+  display.drawRect(110, 0, 15, 16, SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(93, 4);
-  display.print("Status");
+  display.print("S");
 
   // Dashed line separating header
   for (int i = 0; i < SCREEN_WIDTH; i += 4)
@@ -229,7 +229,7 @@ void initializeDisplayLayout() {
   display.drawRect(40, 22, 84, 40, SSD1306_WHITE); // large box
   display.setCursor(45, 30);
   display.setTextSize(1);
-  display.print("variable");
+  display.print("");
 
   display.display();
 }
@@ -243,7 +243,7 @@ void updateStatus(uint8_t mode, String txt, int angle) {
     default:        statusText = "???";  break;
   }
 
-  display.fillRect(91, 1, 36, 14, SSD1306_BLACK); // clear box
+  display.fillRect(127, 1, 40, 14, SSD1306_BLACK); // clear box
   display.setCursor(93, 4);
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
