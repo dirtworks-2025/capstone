@@ -14,7 +14,7 @@ struct Task
 
 Task tasks[MAX_TASKS];
 
-bool insertTask(unsigned long delayMs, void (*callback)())
+void insertTask(unsigned long delayMs, void (*callback)())
 {
     for (uint8_t i = 0; i < MAX_TASKS; i++)
     {
@@ -23,10 +23,10 @@ bool insertTask(unsigned long delayMs, void (*callback)())
             tasks[i].scheduledTime = millis() + delayMs;
             tasks[i].callback = callback;
             tasks[i].inUse = true;
-            return true;
+            return;
         }
     }
-    return false;
+    throwError("Failed to insert task. Max number of tasks exceeded.");
 }
 
 // Run up to MAX_TASKS ready tasks
@@ -694,6 +694,8 @@ void handleResume()
     digitalWrite(RIGHT_BACKWARD_EN, HIGH);
     digitalWrite(LEFT_FORWARD_EN, HIGH);
     digitalWrite(LEFT_BACKWARD_EN, HIGH);
+    digitalWrite(HOE_FORWARD_EN, HIGH);
+    digitalWrite(HOE_BACKWARD_EN, HIGH);
 
     cmdRightTankDriveSpeed = 0;
     cmdLeftTankDriveSpeed = 0;
@@ -716,6 +718,8 @@ void updateHoeEncoder()
 {
     int currentCLK = digitalRead(HOE_ENCODER_CLK);
     int currentDT = digitalRead(HOE_ENCODER_DT);
+
+    // maybeLog("Encoder tick - CLK: " + String(currentCLK) + " DT: " + String(currentDT));
 
     if (currentCLK != lastHoeEncoderCLK)
     {
